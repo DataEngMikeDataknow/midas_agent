@@ -1,0 +1,400 @@
+bundle:
+  name: midas_agent
+
+# -----------------------------------------------------------------------------
+# DEFINICIÓN DE VARIABLES GLOBALES (DECLARACIÓN OBLIGATORIA)
+# -----------------------------------------------------------------------------
+variables:
+  catalog_name:
+    description: Catálogo de Unity Catalog
+    default: epm_datalabs_catalog_dllo
+  schema_name:
+    description: Esquema de base de datos
+    default: facturacion
+  endpoint_name:
+    description: Nombre del Endpoint de Serving donde se desplegará el agente
+  experiment_path:
+    description: Ruta completa de MLflow donde se registrarán las corridas
+  source_catalog:
+    description: Catálogo de Unity Catalog donde se encuentran los datos fuente
+  source_schema:
+    description: Esquema de base de datos donde se encuentran los datos fuente
+  source_volume:
+    description: Volumen de datos donde se encuentran los datos fuente
+  source_base_path:
+    description: Ruta base dentro del volumen de datos donde se encuentran los datos fuente
+  pipeline_sp:
+    description: Application ID del Service Principal que ejecuta el deploy en cada ambiente
+  endpoint_manager_user:
+    description: Usuario que debe quedar con permisos CAN_MANAGE sobre el serving endpoint
+  inference_output_path:
+    description: Ruta ABFSS del External Location gold donde se publica el CSV de inferencia
+  endpoint_workload_size:
+    description: Tamaño del workload del serving endpoint
+  endpoint_scale_to_zero_enabled:
+    description: Indica si el serving endpoint puede escalar a cero
+  agent_llm_timeout_seconds:
+    description: Timeout interno para llamadas del agente al endpoint LLM
+  agent_max_iterations:
+    description: Máximo de iteraciones de tool-calling del agente
+  db_user:
+    description: Usuario de conexión a la base de datos Oracle
+  db_dsn:
+    description: DSN de conexión Oracle (host:puerto/servicio)
+  oracle_secret_scope:
+    description: Databricks Secret Scope que contiene la contraseña de Oracle
+  db_password_secret_key:
+    description: Nombre de la clave en el Secret Scope que almacena la contraseña de Oracle
+
+targets:
+  # -------------------- DESARROLLO (DEV) --------------------
+  dev:
+    mode: production
+    default: true
+    workspace:
+      host: https://adb-1161217326944529.9.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    # Service Principal que ejecuta los Jobs en Dev.
+    # APP-ID tomado de la variable DEV_AZURE_SP_APPLICATION_ID del variable group databricks-MIDAS.
+    # El pipeline CI/CD deploya autenticado como este mismo SP → puede asignarse a sí mismo como run_as.
+    # Deploy manual por usuario dev fallará si el usuario no tiene rol servicePrincipal.user en Azure AD.
+    # run_as comentado para permitir deploy manual (jobs corren como el usuario que deploya).
+    # Descomentar cuando el pipeline CI/CD esté configurado correctamente.
+    # run_as:
+    #   service_principal_name: f36901fa-aa2a-47b1-9f1e-0d2553e79a6d
+    variables:
+      catalog_name: epm_datalabs_catalog_dllo
+      schema_name: facturacion
+      source_catalog: epm_datalake_vol_np
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      endpoint_name: agente_ordenes_calidad_dev_v3
+      experiment_path: /Users/ssuarecr@contratista.epm.co/midas_agent_experiment
+      pipeline_sp: 2080d313-3074-4adf-8265-916ef7645dc2
+      endpoint_manager_user: frans.taboada@epm.com.co
+      inference_output_path: "abfss://gold@azsaepmnpdatalakeg2.dfs.core.windows.net/Midas_agent_inference/dev"
+      endpoint_workload_size: Small
+      endpoint_scale_to_zero_enabled: true
+      agent_llm_timeout_seconds: 60
+      agent_max_iterations: 10
+      db_user: SQL_EPMBOTPD05
+      db_dsn: "epm-to34.corp.epm.com.co:1521/SFUAT"
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
+      db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+
+  # -------------------- PRUEBAS (UAT) --------------------
+  # Franz confirmó (05/Mar/2026):
+  #   - Catálogo destino UAT: epm_datalake_catalog_np (espejo de epm_datalabs_catalog_dllo en DLLO)
+  #   - Catálogo fuente UAT: epm_datalake_vol_np (lago compartido, solo lectura, igual que DLLO)
+  #   - SP de UAT ya tiene permisos de creación de clusters → se usa new_cluster (sin cluster_id fijo)
+  #   - Ambiente limpio: DABs crea jobs, cluster, modelo y endpoint desde cero
+  uat:
+    mode: production
+    workspace:
+      host: https://adb-6159907084216583.3.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    # SP de UAT (UAT_AZURE_SP_APPLICATION_ID en variable group databricks-MIDAS).
+    # Tiene permisos de creación de clusters y de asignarse permisos a sí mismo.
+    run_as:
+      service_principal_name: c0b3fdca-baec-4bab-9f08-c6e222d921ae
+    variables:
+      catalog_name: epm_datalake_catalog_np
+      schema_name: facturacion
+      source_catalog: epm_datalake_vol_np
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      endpoint_name: agente_ordenes_calidad_uat
+      experiment_path: /Users/c0b3fdca-baec-4bab-9f08-c6e222d921ae/midas_agent_experiment_uat
+      pipeline_sp: c0b3fdca-baec-4bab-9f08-c6e222d921ae
+      endpoint_manager_user: frans.taboada@epm.com.co
+      inference_output_path: "abfss://gold@azsaepmnpdatalakeg2.dfs.core.windows.net/Midas_agent_inference/uat"
+      endpoint_workload_size: Medium
+      endpoint_scale_to_zero_enabled: false
+      agent_llm_timeout_seconds: 60
+      agent_max_iterations: 10
+      db_user: SQL_EPMBOTPD05
+      db_dsn: "epm-to34.corp.epm.com.co:1521/SFUAT"
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
+      db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+    resources:
+      jobs:
+        midas_load_transform_data:
+          permissions:
+            - level: CAN_MANAGE
+              service_principal_name: ${var.pipeline_sp}
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+        midas_agent_deploy_ops:
+          permissions:
+            - level: CAN_MANAGE
+              service_principal_name: ${var.pipeline_sp}
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+        midas_agent_inference:
+          permissions:
+            - level: CAN_MANAGE
+              service_principal_name: ${var.pipeline_sp}
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+
+  # -------------------- PRODUCCIÓN (PROD) --------------------
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-5768199714870840.0.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    # SP de Prod (PROD_AZURE_SP_APPLICATION_ID del variable group databricks-MIDAS).
+    run_as:
+      service_principal_name: 1db15634-31b7-4f92-a976-fc8920216152
+    variables:
+      catalog_name: epm_datalake_catalog_prod
+      schema_name: facturacion
+      source_catalog: epm_datalake_vol_prod
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      endpoint_name: agente_ordenes_calidad_prod
+      experiment_path: /Users/1db15634-31b7-4f92-a976-fc8920216152/midas_agent_experiment_prod
+      pipeline_sp: 1db15634-31b7-4f92-a976-fc8920216152
+      endpoint_manager_user: frans.taboada@epm.com.co
+      inference_output_path: "abfss://gold@azsaepmproddatalakeg2.dfs.core.windows.net/facturacion/Midas_agent_inference/prod"
+      endpoint_workload_size: Medium
+      endpoint_scale_to_zero_enabled: false
+      agent_llm_timeout_seconds: 60
+      agent_max_iterations: 10
+      db_user: SQL_EPMBOTPD05
+      db_dsn: "epm-po34.corp.epm.com.co:1522/SFPDN"
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-PROD
+      db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+
+# -----------------------------------------------------------------------------
+# CONFIGURACIÓN DEL CLUSTER COMPARTIDO POR LOS JOBS
+# Specs tomados del cluster DEV (0722-211855-e1a090ph):
+#   spark_version: 16.4.x-scala2.12 | node: Standard_DS4_v2 | USER_ISOLATION
+# Se usa new_cluster (en lugar de existing_cluster_id) para soportar UAT/Prod
+# donde el SP crea el cluster automáticamente. En DEV también se crea nuevo
+# cluster por job run (sin depender de un cluster specific encendido).
+# -----------------------------------------------------------------------------
+_job_cluster: &job_cluster
+  job_cluster_key: midas_cluster
+  new_cluster:
+    spark_version: "16.4.x-scala2.12"
+    node_type_id: Standard_DS4_v2
+    data_security_mode: USER_ISOLATION
+    num_workers: 2
+
+# -----------------------------------------------------------------------------
+# RECURSOS (JOBS)
+# -----------------------------------------------------------------------------
+resources:
+  jobs:
+    # JOB 1: CARGA DE DATOS, TRANSFORMACIÓN Y CREACIÓN DE FUNCIONES SQL
+    midas_load_transform_data:
+      name: midas_load_transform_data
+      permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${var.pipeline_sp}
+      email_notifications:
+        on_success:
+          - jonatan.londono@epm.com.co
+        on_failure:
+          - jonatan.londono@epm.com.co
+      job_clusters:
+        - *job_cluster
+      tasks:
+        - task_key: extraer_datos_oracle
+          job_cluster_key: midas_cluster
+          libraries:
+            - pypi:
+                package: oracledb
+            - pypi:
+                package: tqdm
+          spark_python_task:
+            python_file: ./src/midas/main_data_fetcher.py
+            parameters:
+              - "--db_user"
+              - "${var.db_user}"
+              - "--db_dsn"
+              - "${var.db_dsn}"
+              - "--secret_scope"
+              - "${var.oracle_secret_scope}"
+              - "--db_password_secret_key"
+              - "${var.db_password_secret_key}"
+              - "--output_path"
+              - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+
+        - task_key: actualizar_ordenes_calidad
+          depends_on:
+            - task_key: extraer_datos_oracle
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_ingestion.py
+            parameters:
+              - "--source_catalog"
+              - "${var.source_catalog}"
+              - "--source_schema"
+              - "${var.source_schema}"
+              - "--source_volume"
+              - "${var.source_volume}"
+              - "--source_base_path"
+              - "${var.source_base_path}"
+              - "--destination_catalog"
+              - "${var.catalog_name}"
+              - "--destination_schema"
+              - "${var.schema_name}"
+
+        - task_key: bronze_to_silver
+          depends_on:
+            - task_key: actualizar_ordenes_calidad
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_transform.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+
+        - task_key: create_sql_functions
+          depends_on:
+            - task_key: bronze_to_silver
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_tools.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+              - "--pipeline_sp"
+              - "${var.pipeline_sp}"
+
+        - task_key: trigger_inference
+          depends_on:
+            - task_key: create_sql_functions
+          run_job_task:
+            job_id: ${resources.jobs.midas_agent_inference.id}
+
+      schedule:
+        quartz_cron_expression: "0 30 8 * * ?"
+        timezone_id: "America/Bogota"
+        pause_status: UNPAUSED
+      tags:
+        Area: Facturación
+        Gerencia: Gerencia experiacia usuario cliente
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
+
+    # JOB 2: MLOPS - DESPLIEGUE DEL AGENTE
+    midas_agent_deploy_ops:
+      name: midas_agent_deploy_ops
+      permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${var.pipeline_sp}
+      email_notifications:
+        on_success:
+          - jonatan.londono@epm.com.co
+        on_failure:
+          - jonatan.londono@epm.com.co
+      job_clusters:
+        - *job_cluster
+      tasks:
+        - task_key: create_sql_functions
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_tools.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+              - "--pipeline_sp"
+              - "${var.pipeline_sp}"
+
+        - task_key: deploy_agent_version
+          depends_on:
+            - task_key: create_sql_functions
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_deploy.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+              - "--model_name"
+              - "midas_agent_model"
+              - "--endpoint_name"
+              - "${var.endpoint_name}"
+              - "--experiment_path"
+              - "${var.experiment_path}"
+              - "--endpoint_workload_size"
+              - "${var.endpoint_workload_size}"
+              - "--endpoint_scale_to_zero_enabled"
+              - "${var.endpoint_scale_to_zero_enabled}"
+              - "--agent_llm_timeout_seconds"
+              - "${var.agent_llm_timeout_seconds}"
+              - "--agent_max_iterations"
+              - "${var.agent_max_iterations}"
+              - "--pipeline_sp"
+              - "${var.pipeline_sp}"
+        - task_key: grant_endpoint_permissions
+          depends_on:
+            - task_key: deploy_agent_version
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_endpoint_permissions.py
+            parameters:
+              - "--endpoint_name"
+              - "${var.endpoint_name}"
+              - "--endpoint_manager_user"
+              - "${var.endpoint_manager_user}"
+      # Sin schedule: este job lo dispara el pipeline de Azure DevOps
+      # automáticamente tras cada bundle deploy (databricks bundle run).
+      tags:
+        Area: Facturación
+        Tipo: LLMOps
+
+    # JOB 3: INFERENCIA BATCH DEL AGENTE
+    midas_agent_inference:
+      name: midas_agent_inference
+      permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${var.pipeline_sp}
+      email_notifications:
+        on_success:
+          - jonatan.londono@epm.com.co
+        on_failure:
+          - jonatan.londono@epm.com.co
+      job_clusters:
+        - *job_cluster
+      tasks:
+        - task_key: batch_inference
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_inference.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+              - "--model_endpoint"
+              - "${var.endpoint_name}"
+              - "--activity_filter"
+              - "1019 - DIFERENCIA ACUEDUCTO Y ALCANTARILLADO"
+              - "--request_timeout_seconds"
+              - "60"
+              - "--max_retries"
+              - "3"
+              - "--source_table"
+              - "midas_ordenes_calidad_pendientes_silver"
+              - "--target_table"
+              - "midas_predicciones_agente_gold"
+              - "--output_path"
+              - "${var.inference_output_path}"
+      tags:
+        Area: Facturación
+        Tipo: LLMOps

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "config": {
+    "bundle": {
+      "git": {
+        "origin_url": "https://grupoepm.visualstudio.com/EfiFact/_git/Midas",
+        "commit": "59f6bb8b797ee8a4313b733d678876624f4729a2",
+        "bundle_root_path": "."
+      }
+    },
+    "workspace": {
+      "file_path": "/Shared/bundles/midas_agent/dev/files"
+    },
+    "resources": {
+      "jobs": {
+        "midas_agent_deploy_ops": {
+          "id": "659971599328913",
+          "relative_path": "databricks.yml"
+        },
+        "midas_agent_inference": {
+          "id": "179993331487447",
+          "relative_path": "databricks.yml"
+        },
+        "midas_load_transform_data": {
+          "id": "366346800973171",
+          "relative_path": "databricks.yml"
+        }
+      }
+    }
+  }
+}
