@@ -1,21 +1,24 @@
 """
 Orquestador delgado de la cadena de extraccion Midas (las 8 tablas).
 
-Envuelve las funciones de processing.py existentes con el cliente de
-control. No reescribe processing.py ni queries.py: cada paso de la cadena
-sigue siendo el mismo, solo se le pone un decorador alrededor.
+Envuelve las funciones de processing.py con el cliente de control, ALINEADO
+al esquema real de las tablas. No reescribe processing.py ni queries.py.
 
-Diseño:
-- Modo unico: FULL_CHAINED. La cadena entera se ejecuta en cada corrida.
-- Granularidad: una fila de control por tabla. Si una falla, las
-  dependientes se marcan FALLIDA y la cadena se aborta (el agente downstream
-  no debe ver datos parciales).
-- Skip de tabla con corrida exitosa del dia: NO se aplica en esta version.
-  El default acordado es reprocesar todo cada dia.
+Modelo de log (esquema real):
+- Cada paso escribe una fila INICIADO al empezar y una EXITOSO/FALLIDO al
+  terminar, en midas_log_cargas, con el mismo run_id.
+- El estado NO se guarda en midas_control_cargas (esa tabla es solo config).
+- id_carga se resuelve por tabla_destino desde midas_control_cargas. Si la
+  tabla no esta registrada en control (porque el seed solo cubre algunas),
+  id_carga queda en None y el log igual se escribe (id_carga es nullable en
+  el log salvo que tu DDL lo marque NOT NULL; ver nota abajo).
 
-IMPORTANTE: este modulo se usa SOLO desde main_data_fetcher.py. El control
-en main_ingestion.py (paso Parquet -> Bronze) se registra por separado en
-ese mismo modulo via ControlCargasClient.
+NOTA sobre id_carga NOT NULL en el log:
+  El DDL real de midas_log_cargas declara id_carga BIGINT NOT NULL. Por eso
+  TODAS las 8 tablas Bronze deben existir como filas en midas_control_cargas
+  antes de correr (ver seed_control_cargas.sql). Si una tabla no esta en
+  control, get_id_carga devuelve None y el INSERT fallaria por NOT NULL.
+  El seed de las 8 tablas es, por tanto, prerequisito.
 """
 import logging
 from datetime import datetime
@@ -23,51 +26,41 @@ from typing import Callable, Optional, Tuple
 
 import pandas as pd
 
-from .control_cargas import (
-    ControlCargasClient,
-    ESTADO_EXITOSA,
-    ESTADO_FALLIDA,
-)
+from .control_cargas import ControlCargasClient
 
 log = logging.getLogger(__name__)
 
 
-# Nombres de las tablas Bronze tal como existen hoy en facturacion.
-# Esto coincide con las claves de tables_config en main_ingestion.py.
-TABLA_ORDENES_PENDIENTES   = "midas_ordenes_calidad_pendientes_bronze"
-TABLA_DATOS_BASICOS        = "midas_datos_basicos_producto_bronze"
-TABLA_LECTURAS             = "midas_datos_lecturas_producto_bronze"
-TABLA_CONSUMOS             = "midas_datos_consumos_producto_bronze"
-TABLA_ORDENES_CRITICA      = "midas_datos_ordenes_previa_critica_bronze"
-TABLA_COMENTARIOS_ORDENES  = "midas_datos_cometarios_ordenes_bronze"
-TABLA_CUENTAS_COBRO        = "midas_datos_cuentas_cobro_bronze"
-TABLA_DETALLE_CARGOS       = "midas_datos_detalle_cargos_bronze"
+# (tabla_destino, query_key) de cada paso de la cadena.
+# query_key debe coincidir con la columna query_key del seed de control.
+PASO_ORDENES_PENDIENTES  = ("midas_ordenes_calidad_pendientes_bronze",   "QUERY_ORDENES_PENDIENTES")
+PASO_DATOS_BASICOS       = ("midas_datos_basicos_producto_bronze",       "QUERY_DATOS_BASICOS")
+PASO_LECTURAS            = ("midas_datos_lecturas_producto_bronze",      "QUERY_DATOS_LECTURA")
+PASO_CONSUMOS            = ("midas_datos_consumos_producto_bronze",      "QUERY_DATOS_CONSUMOS")
+PASO_ORDENES_CRITICA     = ("midas_datos_ordenes_previa_critica_bronze", "QUERY_ORDENES_CRITICA_PEVIA")
+PASO_COMENTARIOS         = ("midas_datos_cometarios_ordenes_bronze",     "QUERY_COMENTARIOS_ORDENES")
+PASO_CUENTAS_COBRO       = ("midas_datos_cuentas_cobro_bronze",          "QUERY_CUENTAS_COBRO")
+PASO_DETALLE_CARGOS      = ("midas_datos_detalle_cargos_bronze",         "QUERY_DETALLE_CARGOS")
 
 
 def _ejecutar_paso(
     control: ControlCargasClient,
-    tabla_nombre: str,
+    tabla_destino: str,
+    query_key: str,
     fn: Callable[[], pd.DataFrame],
 ) -> Tuple[Optional[pd.DataFrame], int]:
     """
-    Ejecuta un paso de la cadena envuelto en control de cargas.
-
-    Devuelve (df, n_filas). Si el paso falla, marca FALLIDA, registra el
-    log y re-lanza la excepcion para que la cadena se aborte.
-
-    fn es una funcion sin parametros: typicamente una lambda que llama a
-    processing.run_query_xxx(df_anterior).
+    Ejecuta un paso envuelto en control: log INICIADO -> fn() -> log EXITOSO/FALLIDO.
+    Si falla, re-lanza para abortar la cadena (downstream depende del resultado).
     """
-    intento = 1
+    id_carga = control.get_id_carga(tabla_destino)
     fecha_inicio = datetime.utcnow()
 
-    control.mark_in_progress(tabla_nombre)
-    log.info("[%s] inicio extraccion", tabla_nombre)
+    control.log_inicio(tabla_destino, query_key, id_carga, fecha_inicio)
+    log.info("[%s] inicio extraccion (id_carga=%s)", tabla_destino, id_carga)
 
     try:
         df = fn()
-        # Convencion: processing.* devuelve None o DataFrame vacio cuando no hay datos.
-        # Lo aceptamos como exito (el agente downstream lo manejara) pero registramos 0 filas.
         if df is None:
             n = 0
         elif isinstance(df, pd.DataFrame):
@@ -75,96 +68,67 @@ def _ejecutar_paso(
         else:
             n = 0
 
-        control.mark_success(tabla_nombre)
-        control.log_attempt(
-            tabla_nombre=tabla_nombre,
-            intento=intento,
+        control.log_exito(
+            tabla_destino=tabla_destino,
+            query_key=query_key,
+            id_carga=id_carga,
             fecha_inicio=fecha_inicio,
-            fecha_fin=datetime.utcnow(),
-            estado=ESTADO_EXITOSA,
-            registros_leidos=n,
-            registros_escritos=n,
+            filas_leidas=n,
+            filas_escritas=n,
         )
-        log.info("[%s] exitosa (%d filas)", tabla_nombre, n)
+        log.info("[%s] EXITOSO (%d filas)", tabla_destino, n)
         return df, n
 
     except Exception as exc:
-        log.exception("[%s] fallo en extraccion", tabla_nombre)
-        control.mark_failed(tabla_nombre)
-        control.log_attempt(
-            tabla_nombre=tabla_nombre,
-            intento=intento,
+        log.exception("[%s] FALLIDO en extraccion", tabla_destino)
+        control.log_fallo(
+            tabla_destino=tabla_destino,
+            query_key=query_key,
+            id_carga=id_carga,
             fecha_inicio=fecha_inicio,
-            fecha_fin=datetime.utcnow(),
-            estado=ESTADO_FALLIDA,
             mensaje_error=str(exc),
         )
-        # Re-lanzamos: la cadena queda interrumpida y el job falla.
         raise
 
 
 def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) -> None:
     """
     Ejecuta la cadena completa de las 8 tablas envuelta en control.
-
-    Recibe el modulo processing como parametro para no acoplar este archivo
-    al import path (facilita los tests). En produccion se llama asi:
-
-        from midas.db import processing
-        ejecutar_cadena_extraccion(processing, control)
-
-    Si cualquier paso falla, se re-lanza la excepcion y se aborta el resto.
-    Esto es intencional: las queries downstream dependen del resultado del
-    paso anterior; sin ese resultado no tiene sentido seguir.
+    Recibe el modulo processing como parametro (facilita tests).
     """
-    log.info("== Inicio cadena extraccion (id_ejecucion=%s) ==", control.id_ejecucion)
+    log.info("== Inicio cadena extraccion (run_id=%s) ==", control.run_id)
 
     df_ord, _ = _ejecutar_paso(
-        control,
-        TABLA_ORDENES_PENDIENTES,
-        lambda: processing_module.run_query_ordenes_pendientes(),
+        control, *PASO_ORDENES_PENDIENTES,
+        fn=lambda: processing_module.run_query_ordenes_pendientes(),
     )
-
     df_basicos, _ = _ejecutar_paso(
-        control,
-        TABLA_DATOS_BASICOS,
-        lambda: processing_module.run_query_datos_basicos(df_ord),
+        control, *PASO_DATOS_BASICOS,
+        fn=lambda: processing_module.run_query_datos_basicos(df_ord),
     )
-
     df_lecturas, _ = _ejecutar_paso(
-        control,
-        TABLA_LECTURAS,
-        lambda: processing_module.run_query_datos_lectura(df_basicos),
+        control, *PASO_LECTURAS,
+        fn=lambda: processing_module.run_query_datos_lectura(df_basicos),
     )
-
     _ejecutar_paso(
-        control,
-        TABLA_CONSUMOS,
-        lambda: processing_module.run_query_datos_consumos(df_lecturas),
+        control, *PASO_CONSUMOS,
+        fn=lambda: processing_module.run_query_datos_consumos(df_lecturas),
     )
-
     df_critica, _ = _ejecutar_paso(
-        control,
-        TABLA_ORDENES_CRITICA,
-        lambda: processing_module.run_query_ordenes_critica_previa(df_lecturas),
+        control, *PASO_ORDENES_CRITICA,
+        fn=lambda: processing_module.run_query_ordenes_critica_previa(df_lecturas),
     )
-
     _ejecutar_paso(
-        control,
-        TABLA_COMENTARIOS_ORDENES,
-        lambda: processing_module.run_query_comentarios_ordenes(df_critica),
+        control, *PASO_COMENTARIOS,
+        fn=lambda: processing_module.run_query_comentarios_ordenes(df_critica),
     )
-
     df_cuentas, _ = _ejecutar_paso(
-        control,
-        TABLA_CUENTAS_COBRO,
-        lambda: processing_module.run_query_cuentas_cobro(df_basicos),
+        control, *PASO_CUENTAS_COBRO,
+        fn=lambda: processing_module.run_query_cuentas_cobro(df_basicos),
     )
-
     _ejecutar_paso(
-        control,
-        TABLA_DETALLE_CARGOS,
-        lambda: processing_module.run_query_detalle_cargos(df_cuentas),
+        control, *PASO_DETALLE_CARGOS,
+        fn=lambda: processing_module.run_query_detalle_cargos(df_cuentas),
     )
 
     log.info("== Cadena extraccion OK ==")

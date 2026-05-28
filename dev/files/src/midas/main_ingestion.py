@@ -1,9 +1,7 @@
 import os
 import sys
 
-# Agrega src/ al path para que el paquete `midas` sea importable en Databricks
-# cuando el job se ejecuta como spark_python_task.
-# __file__ no está definido en contextos ipykernel de Databricks; sys.argv[0] es el fallback.
+# __file__ no esta definido en ipykernel de Databricks; sys.argv[0] es el fallback (BUG-001).
 try:
     _script_dir = os.path.dirname(os.path.abspath(__file__))
 except NameError:
@@ -17,14 +15,22 @@ import argparse
 from datetime import datetime
 from pyspark.sql import SparkSession
 from midas.ingestion import DataIngestor
-from midas.framework.control_cargas import (
-    ControlCargasClient,
-    ESTADO_EXITOSA,
-    ESTADO_FALLIDA,
-)
+from midas.framework.control_cargas import ControlCargasClient
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
+
+# Mapeo tabla -> (query_key, nombre_parquet) para enriquecer el log.
+_QUERY_KEY = {
+    "midas_ordenes_calidad_pendientes_bronze":   "QUERY_ORDENES_PENDIENTES",
+    "midas_datos_basicos_producto_bronze":       "QUERY_DATOS_BASICOS",
+    "midas_datos_lecturas_producto_bronze":      "QUERY_DATOS_LECTURA",
+    "midas_datos_consumos_producto_bronze":      "QUERY_DATOS_CONSUMOS",
+    "midas_datos_ordenes_previa_critica_bronze": "QUERY_ORDENES_CRITICA_PEVIA",
+    "midas_datos_cometarios_ordenes_bronze":     "QUERY_COMENTARIOS_ORDENES",
+    "midas_datos_cuentas_cobro_bronze":          "QUERY_CUENTAS_COBRO",
+    "midas_datos_detalle_cargos_bronze":         "QUERY_DETALLE_CARGOS",
+}
 
 
 def main():
@@ -35,37 +41,33 @@ def main():
     parser.add_argument("--source_base_path", required=True)
     parser.add_argument("--destination_catalog", required=True)
     parser.add_argument("--destination_schema", required=True)
-    # ─── Etapa 2: parametros nuevos para el framework de control de cargas ───
-    parser.add_argument("--control_catalog", required=True,
-                        help="Catalogo donde viven midas_control_cargas y midas_log_cargas")
-    parser.add_argument("--control_schema", required=True,
-                        help="Schema donde viven midas_control_cargas y midas_log_cargas")
-    parser.add_argument("--id_ejecucion", default=None,
-                        help="UUID de la corrida. Idealmente el mismo de la etapa de extraccion.")
+    # ─── Etapa 2: framework de control de cargas ───
+    parser.add_argument("--control_catalog", required=True)
+    parser.add_argument("--control_schema", required=True)
+    parser.add_argument("--run_id", default=None,
+                        help="UUID de la corrida. Idealmente el mismo de la extraccion.")
 
     args = parser.parse_args()
 
     spark = SparkSession.builder.getOrCreate()
     ingestor = DataIngestor(spark)
 
-    # ─── Etapa 2: cliente de control para el paso Parquet -> Bronze ───
-    usuario = None
     try:
         usuario = spark.sql("SELECT current_user() AS u").collect()[0]["u"]
     except Exception:
         usuario = "midas_framework"
+
     control = ControlCargasClient(
         spark=spark,
         catalog=args.control_catalog,
         schema=args.control_schema,
-        id_ejecucion=args.id_ejecucion,
+        run_id=args.run_id,
         usuario_ejecutor=usuario,
     )
-    log.info("Control de cargas activo. id_ejecucion=%s", control.id_ejecucion)
+    log.info("Control de cargas activo. run_id=%s", control.run_id)
 
     source_volume_path = f"dbfs:/Volumes/{args.source_catalog}/{args.source_schema}/{args.source_volume}/{args.source_base_path}"
-    
-    # Configuración de tablas (esto podría externalizarse a un JSON)
+
     tables_config = [
         {
             "name": "midas_ordenes_calidad_pendientes_bronze",
@@ -119,49 +121,49 @@ def main():
             "description": "Detalle de cargos."
         }
     ]
-    
-    # Garantiza que el schema destino existe antes de crear/cargar tablas.
-    # En primera ejecución lo crea; en cargas diarias es un no-op.
-    # Requiere CREATE SCHEMA en el catálogo (permiso del Service Principal run_as).
+
+    # En primera ejecución crea el schema; en cargas diarias es no-op.
     ingestor.ensure_schema_exists(args.destination_catalog, args.destination_schema)
 
-    # ─── Etapa 2: cada tabla del Parquet->Bronze tambien se registra ───
-    # NOTA: control aqui registra el SEGUNDO intento de la tabla. Ya hubo un
-    # registro EXITOSA durante la extraccion (chain_runner). El log_cargas
-    # tendra 2 filas por tabla por corrida: una de extraccion, otra de
-    # ingesta a Bronze. Es deliberado: separa fallos de Oracle de fallos de
-    # escritura en Delta.
+    # Cada carga Parquet -> Bronze se registra como una fila adicional de log
+    # con la fase de ingesta. Misma run_id que la extraccion si se pasa --run_id.
     errores = []
     for config in tables_config:
         tabla = config["name"]
+        query_key = _QUERY_KEY.get(tabla)
+        id_carga = control.get_id_carga(tabla)
         fecha_inicio = datetime.utcnow()
-        # No marcamos EN_PROCESO aqui para no pisar el EXITOSA de la extraccion
-        # mientras Bronze esta corriendo. Solo logueamos el intento al final.
+        parquet_path = config["path"]
+
+        control.log_inicio(tabla, query_key, id_carga, fecha_inicio)
         try:
             ingestor.load_parquet_to_delta(config, args.destination_catalog, args.destination_schema)
-            control.log_attempt(
-                tabla_nombre=tabla,
-                intento=2,  # 1 = extraccion, 2 = ingesta Bronze
+            # Contar filas escritas en Bronze para el log.
+            full = f"{args.destination_catalog}.{args.destination_schema}.{tabla}"
+            try:
+                n = spark.table(full).count()
+            except Exception:
+                n = None
+            control.log_exito(
+                tabla_destino=tabla,
+                query_key=query_key,
+                id_carga=id_carga,
                 fecha_inicio=fecha_inicio,
-                fecha_fin=datetime.utcnow(),
-                estado=ESTADO_EXITOSA,
+                filas_escritas=n,
+                parquet_path=parquet_path,
             )
         except Exception as exc:
             log.exception("[%s] fallo en ingesta a Bronze", tabla)
-            control.mark_failed(tabla)
-            control.log_attempt(
-                tabla_nombre=tabla,
-                intento=2,
+            control.log_fallo(
+                tabla_destino=tabla,
+                query_key=query_key,
+                id_carga=id_carga,
                 fecha_inicio=fecha_inicio,
-                fecha_fin=datetime.utcnow(),
-                estado=ESTADO_FALLIDA,
                 mensaje_error=str(exc),
             )
             errores.append((tabla, str(exc)))
 
     if errores:
-        # Falla la tarea para que Databricks marque el run como fallido y
-        # las tareas downstream (silver, tools, inferencia) no corran.
         raise RuntimeError(f"Ingesta Bronze incompleta: {errores}")
 
 

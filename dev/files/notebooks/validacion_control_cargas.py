@@ -1,70 +1,70 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Validacion del framework de control de cargas
+# MAGIC # Validacion del framework de control de cargas (esquema real)
 # MAGIC
-# MAGIC Ejecutar despues de cada corrida del job `midas_load_transform_data`
-# MAGIC para verificar que:
-# MAGIC
-# MAGIC 1. Las 8 tablas estan registradas en `midas_control_cargas`.
-# MAGIC 2. La ultima corrida quedo en `EXITOSA` en las 8.
-# MAGIC 3. `midas_log_cargas` tiene los registros del intento.
-# MAGIC 4. Los conteos del log coinciden razonablemente con las tablas Bronze.
+# MAGIC Ejecutar tras cada corrida de `midas_load_transform_data`.
+# MAGIC Estructura real: el estado vive en midas_log_cargas (no en control).
 
 # COMMAND ----------
-
 # Cambiar segun ambiente:
-#   DEV  : epm_datalabs_catalog_dllo
-#   UAT  : epm_datalake_catalog_np
-#   PROD : epm_datalake_catalog_prod
+#   DEV: epm_datalabs_catalog_dllo | UAT: epm_datalake_catalog_np | PROD: epm_datalake_catalog_prod
 CATALOG = "epm_datalabs_catalog_dllo"
 SCHEMA  = "facturacion"
 
 # COMMAND ----------
-# MAGIC %md ## 1. Estado actual de midas_control_cargas
+# MAGIC %md ## 1. Configuracion: las 8 filas FULL_CHAINED en control
 
 # COMMAND ----------
 display(spark.sql(f"""
-    SELECT tabla_nombre, tipo_carga, estado_ultima_carga,
-           fecha_ultima_carga, activa
+    SELECT id_carga, tabla_destino, tipo_carga, query_key,
+           orden_ejecucion, query_padre_id, activa
     FROM {CATALOG}.{SCHEMA}.midas_control_cargas
-    ORDER BY tabla_nombre
+    WHERE tipo_carga = 'FULL_CHAINED'
+    ORDER BY orden_ejecucion
 """))
 
-# Aserciones suaves
-estados = spark.sql(f"""
-    SELECT estado_ultima_carga, COUNT(*) AS n
-    FROM {CATALOG}.{SCHEMA}.midas_control_cargas
-    GROUP BY estado_ultima_carga
-""").collect()
-print("Resumen de estados:", {r.estado_ultima_carga: r.n for r in estados})
+# COMMAND ----------
+# MAGIC %md ## 2. Ultima corrida (run_id mas reciente)
 
 # COMMAND ----------
-# MAGIC %md ## 2. Ultima corrida (id_ejecucion mas reciente)
-
-# COMMAND ----------
-ult_id = spark.sql(f"""
-    SELECT id_ejecucion
+ult = spark.sql(f"""
+    SELECT run_id
     FROM {CATALOG}.{SCHEMA}.midas_log_cargas
     ORDER BY fecha_inicio DESC
     LIMIT 1
 """).collect()
-ult_id = ult_id[0]["id_ejecucion"] if ult_id else None
-print("Ultima id_ejecucion:", ult_id)
+run_id = ult[0]["run_id"] if ult else None
+print("Ultimo run_id:", run_id)
 
 # COMMAND ----------
-if ult_id:
+if run_id:
     display(spark.sql(f"""
-        SELECT tabla_nombre, intento, estado,
-               fecha_inicio, fecha_fin, duracion_seg,
-               registros_leidos, registros_escritos,
+        SELECT id_carga, tabla_destino, query_key, estado,
+               fecha_inicio, fecha_fin, duracion_segundos,
+               filas_leidas, filas_escritas,
                LEFT(COALESCE(mensaje_error, ''), 120) AS error
         FROM {CATALOG}.{SCHEMA}.midas_log_cargas
-        WHERE id_ejecucion = '{ult_id}'
-        ORDER BY fecha_inicio, tabla_nombre, intento
+        WHERE run_id = '{run_id}'
+        ORDER BY fecha_inicio, tabla_destino
     """))
 
 # COMMAND ----------
-# MAGIC %md ## 3. Conteo en Bronze vs log
+# MAGIC %md ## 3. Estado derivado por tabla (ultima fila de log)
+
+# COMMAND ----------
+display(spark.sql(f"""
+    WITH ult AS (
+        SELECT tabla_destino, estado, fecha_inicio,
+               ROW_NUMBER() OVER (PARTITION BY tabla_destino ORDER BY fecha_inicio DESC) AS rn
+        FROM {CATALOG}.{SCHEMA}.midas_log_cargas
+    )
+    SELECT tabla_destino, estado, fecha_inicio
+    FROM ult WHERE rn = 1
+    ORDER BY tabla_destino
+"""))
+
+# COMMAND ----------
+# MAGIC %md ## 4. Conteo en Bronze
 
 # COMMAND ----------
 TABLAS = [
@@ -79,21 +79,20 @@ TABLAS = [
 ]
 for t in TABLAS:
     try:
-        n = spark.table(f"{CATALOG}.{SCHEMA}.{t}").count()
-        print(f"{t:60s}  {n:>10,}")
+        print(f"{t:60s}  {spark.table(f'{CATALOG}.{SCHEMA}.{t}').count():>10,}")
     except Exception as e:
         print(f"{t:60s}  ERROR: {e}")
 
 # COMMAND ----------
-# MAGIC %md ## 4. Cualquier fallida historica (ultimos 7 dias)
+# MAGIC %md ## 5. Fallidos ultimos 7 dias
 
 # COMMAND ----------
 display(spark.sql(f"""
-    SELECT id_ejecucion, tabla_nombre, intento, estado,
-           fecha_inicio, LEFT(mensaje_error, 200) AS error
+    SELECT run_id, tabla_destino, estado, fecha_inicio,
+           LEFT(mensaje_error, 200) AS error
     FROM {CATALOG}.{SCHEMA}.midas_log_cargas
-    WHERE estado = 'FALLIDA'
+    WHERE estado = 'FALLIDO'
       AND fecha_inicio >= current_timestamp() - INTERVAL 7 DAYS
-    ORDER BY fecha_inicio DESC
-    LIMIT 50
+    ORDER BY fecha_inicio DESC LIMIT 50
 """))
+

@@ -1,51 +1,115 @@
 -- ============================================================================
--- SEED inicial de midas_control_cargas
+-- SEED de midas_control_cargas para las 8 tablas Bronze de la cadena Midas
+-- ALINEADO AL ESQUEMA REAL de la tabla existente.
 -- ============================================================================
--- Inserta UNA fila por cada una de las 8 tablas Bronze de la cadena Midas.
--- Se ejecuta UNA SOLA VEZ por ambiente, despues de aplicar grants_control_tables.sql.
--- Re-ejecutable: usa MERGE para no duplicar filas.
+-- Columnas reales (NOT NULL marcadas):
+--   id_carga IDENTITY (auto, NO insertar)
+--   catalog_destino NOT NULL, schema_destino NOT NULL, tabla_destino NOT NULL,
+--   tipo_carga NOT NULL, query_key NOT NULL, activa NOT NULL,
+--   orden_ejecucion, query_padre_id, columna_join, campo_filtro_incremental,
+--   fecha_creacion (default), fecha_modificacion (default), comentarios
 --
--- Decisiones tomadas:
---   - tipo_carga = 'FULL_CHAINED' (la cadena entera se ejecuta cada corrida).
---   - activa = true para las 8 tablas.
---   - campo_watermark / ultimo_watermark = NULL (no aplica con FULL_CHAINED).
+-- Decisiones:
+--   tipo_carga = 'FULL_CHAINED'  (la cadena entera corre cada dia)
+--   activa = true
+--   orden_ejecucion = orden real de la cadena (1..8) — respeta dependencias
+--   query_key = constante en queries.py
+--   columna_join = la columna que parametriza el paso siguiente (informativo)
+--   query_padre_id = se resuelve en un UPDATE posterior (ver seccion 2)
+--
+-- Es idempotente: MERGE por (catalog_destino, schema_destino, tabla_destino).
 -- ============================================================================
 
--- Cambiar el USE CATALOG segun ambiente:
+-- Cambiar el catalogo segun ambiente:
 --   DEV  : epm_datalabs_catalog_dllo
 --   UAT  : epm_datalake_catalog_np
 --   PROD : epm_datalake_catalog_prod
 USE CATALOG epm_datalabs_catalog_dllo;
 USE SCHEMA facturacion;
 
+-- ---------------------------------------------------------------------------
+-- 1. Insertar/actualizar las 8 filas (sin tocar id_carga, es IDENTITY)
+-- ---------------------------------------------------------------------------
 MERGE INTO midas_control_cargas AS dest
 USING (
   SELECT * FROM VALUES
-    -- (tabla_nombre, tabla_origen_oracle, nombre_query, tipo_carga, nombre_archivo_parquet, primary_key)
-    ('midas_ordenes_calidad_pendientes_bronze',  'FLEX.OR_ORDER_ACTIVITY + OR_ORDER',  'QUERY_ORDENES_PENDIENTES',     'FULL_CHAINED', 'ordenes_calidad_pendientes.parquet', 'id_orden'),
-    ('midas_datos_basicos_producto_bronze',      'FLEX.SERVSUSC + PR_PRODUCT + ...',   'QUERY_DATOS_BASICOS',          'FULL_CHAINED', 'datos_basicos_producto.parquet',     'servicio_suscrito'),
-    ('midas_datos_lecturas_producto_bronze',     'FLEX.LECTELME + CONSSESU + ...',     'QUERY_DATOS_LECTURA',          'FULL_CHAINED', 'datos_lecturas_producto.parquet',    'servicio_suscrito'),
-    ('midas_datos_consumos_producto_bronze',     'FLEX.CONSSESU',                       'QUERY_DATOS_CONSUMOS',         'FULL_CHAINED', 'datos_consumos_producto.parquet',    'servicio_suscrito'),
-    ('midas_datos_ordenes_previa_critica_bronze','FLEX.CM_ORDECRIT + OR_ORDER + ...',  'QUERY_ORDENES_CRITICA_PEVIA',  'FULL_CHAINED', 'datos_ordenes_previa_critica.parquet','id_orden'),
-    ('midas_datos_cometarios_ordenes_bronze',    'FLEX.OR_ORDER_COMMENT + ...',        'QUERY_COMENTARIOS_ORDENES',    'FULL_CHAINED', 'datos_comentarios_ordenes.parquet',  'id_orden'),
-    ('midas_datos_cuentas_cobro_bronze',         'FLEX.CUENCOBR + FACTURA + ...',      'QUERY_CUENTAS_COBRO',          'FULL_CHAINED', 'datos_cuentas_cobro.parquet',        'id_cuenta_cobro'),
-    ('midas_datos_detalle_cargos_bronze',        'FLEX.CARGOS',                         'QUERY_DETALLE_CARGOS',         'FULL_CHAINED', 'datos_detalle_cargos.parquet',       'id_cuenta_cobro')
-  AS t (tabla_nombre, tabla_origen_oracle, nombre_query, tipo_carga, nombre_archivo_parquet, primary_key)
+    -- (tabla_destino, query_key, orden_ejecucion, columna_join)
+    ('midas_ordenes_calidad_pendientes_bronze',  'QUERY_ORDENES_PENDIENTES',    1, NULL),
+    ('midas_datos_basicos_producto_bronze',      'QUERY_DATOS_BASICOS',         2, 'instalacion'),
+    ('midas_datos_lecturas_producto_bronze',     'QUERY_DATOS_LECTURA',         3, 'servicio_suscrito'),
+    ('midas_datos_consumos_producto_bronze',     'QUERY_DATOS_CONSUMOS',        4, 'servicio_suscrito'),
+    ('midas_datos_ordenes_previa_critica_bronze','QUERY_ORDENES_CRITICA_PEVIA', 5, 'servicio_suscrito'),
+    ('midas_datos_cometarios_ordenes_bronze',    'QUERY_COMENTARIOS_ORDENES',   6, 'id_orden'),
+    ('midas_datos_cuentas_cobro_bronze',         'QUERY_CUENTAS_COBRO',         7, 'servicio_suscrito'),
+    ('midas_datos_detalle_cargos_bronze',        'QUERY_DETALLE_CARGOS',        8, 'id_cuenta_cobro')
+  AS t (tabla_destino, query_key, orden_ejecucion, columna_join)
 ) AS src
-ON dest.tabla_nombre = src.tabla_nombre
+ON  dest.catalog_destino = 'epm_datalabs_catalog_dllo'
+AND dest.schema_destino  = 'facturacion'
+AND dest.tabla_destino   = src.tabla_destino
 WHEN NOT MATCHED THEN INSERT (
-    tabla_nombre, tabla_origen_oracle, nombre_query, tipo_carga,
-    campo_watermark, ultimo_watermark, nombre_archivo_parquet, primary_key,
-    estado_ultima_carga, fecha_ultima_carga, activa,
-    fecha_creacion, fecha_modificacion
+    catalog_destino, schema_destino, tabla_destino,
+    tipo_carga, query_key, activa, orden_ejecucion,
+    columna_join, comentarios
 ) VALUES (
-    src.tabla_nombre, src.tabla_origen_oracle, src.nombre_query, src.tipo_carga,
-    NULL, NULL, src.nombre_archivo_parquet, src.primary_key,
-    'PENDIENTE', NULL, true,
-    current_timestamp(), current_timestamp()
+    'epm_datalabs_catalog_dllo', 'facturacion', src.tabla_destino,
+    'FULL_CHAINED', src.query_key, true, src.orden_ejecucion,
+    src.columna_join, 'Cadena Midas 8 tablas - Etapa 2'
+)
+WHEN MATCHED THEN UPDATE SET
+    dest.tipo_carga         = 'FULL_CHAINED',
+    dest.query_key          = src.query_key,
+    dest.activa             = true,
+    dest.orden_ejecucion    = src.orden_ejecucion,
+    dest.columna_join       = src.columna_join,
+    dest.fecha_modificacion = current_timestamp();
+
+-- ---------------------------------------------------------------------------
+-- 2. (Opcional) Resolver query_padre_id para reflejar las dependencias de la
+--    cadena. Solo informativo en FULL_CHAINED; util si en el futuro se
+--    paraleliza por dependencias. Ejecutar despues del MERGE.
+-- ---------------------------------------------------------------------------
+-- datos_basicos depende de ordenes_pendientes
+UPDATE midas_control_cargas SET query_padre_id = (
+    SELECT id_carga FROM midas_control_cargas
+    WHERE tabla_destino = 'midas_ordenes_calidad_pendientes_bronze'
+) WHERE tabla_destino = 'midas_datos_basicos_producto_bronze';
+
+-- lecturas, cuentas_cobro dependen de datos_basicos
+UPDATE midas_control_cargas SET query_padre_id = (
+    SELECT id_carga FROM midas_control_cargas
+    WHERE tabla_destino = 'midas_datos_basicos_producto_bronze'
+) WHERE tabla_destino IN (
+    'midas_datos_lecturas_producto_bronze',
+    'midas_datos_cuentas_cobro_bronze'
 );
 
--- Verificacion
-SELECT tabla_nombre, tipo_carga, estado_ultima_carga, activa
+-- consumos, ordenes_critica dependen de lecturas
+UPDATE midas_control_cargas SET query_padre_id = (
+    SELECT id_carga FROM midas_control_cargas
+    WHERE tabla_destino = 'midas_datos_lecturas_producto_bronze'
+) WHERE tabla_destino IN (
+    'midas_datos_consumos_producto_bronze',
+    'midas_datos_ordenes_previa_critica_bronze'
+);
+
+-- comentarios depende de ordenes_critica
+UPDATE midas_control_cargas SET query_padre_id = (
+    SELECT id_carga FROM midas_control_cargas
+    WHERE tabla_destino = 'midas_datos_ordenes_previa_critica_bronze'
+) WHERE tabla_destino = 'midas_datos_cometarios_ordenes_bronze';
+
+-- detalle_cargos depende de cuentas_cobro
+UPDATE midas_control_cargas SET query_padre_id = (
+    SELECT id_carga FROM midas_control_cargas
+    WHERE tabla_destino = 'midas_datos_cuentas_cobro_bronze'
+) WHERE tabla_destino = 'midas_datos_detalle_cargos_bronze';
+
+-- ---------------------------------------------------------------------------
+-- 3. Verificacion
+-- ---------------------------------------------------------------------------
+SELECT id_carga, tabla_destino, tipo_carga, query_key,
+       orden_ejecucion, query_padre_id, activa
 FROM midas_control_cargas
-ORDER BY tabla_nombre;
+WHERE tipo_carga = 'FULL_CHAINED'
+ORDER BY orden_ejecucion;
