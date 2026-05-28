@@ -45,6 +45,11 @@ variables:
     description: Databricks Secret Scope que contiene la contraseña de Oracle
   db_password_secret_key:
     description: Nombre de la clave en el Secret Scope que almacena la contraseña de Oracle
+  # ─── Etapa 2: framework de control de cargas ───
+  control_catalog:
+    description: Catálogo donde viven midas_control_cargas y midas_log_cargas
+  control_schema:
+    description: Schema donde viven midas_control_cargas y midas_log_cargas
 
 targets:
   # -------------------- DESARROLLO (DEV) --------------------
@@ -54,14 +59,16 @@ targets:
     workspace:
       host: https://adb-1161217326944529.9.azuredatabricks.net
       root_path: /Shared/bundles/${bundle.name}/${bundle.target}
-    # Service Principal que ejecuta los Jobs en Dev.
-    # APP-ID tomado de la variable DEV_AZURE_SP_APPLICATION_ID del variable group databricks-MIDAS.
-    # El pipeline CI/CD deploya autenticado como este mismo SP → puede asignarse a sí mismo como run_as.
-    # Deploy manual por usuario dev fallará si el usuario no tiene rol servicePrincipal.user en Azure AD.
-    # run_as comentado para permitir deploy manual (jobs corren como el usuario que deploya).
-    # Descomentar cuando el pipeline CI/CD esté configurado correctamente.
+    # ─── Etapa 2 (DEV) ───
+    # Version final: el job corre como el Service Principal.
+    # Workaround opcional: si quieres que corra como TU USUARIO para poder
+    # probar sin pedir permisos al SP, COMENTA la linea run_as de abajo y
+    # DESCOMENTA la siguiente. Recuerda volver a la version SP antes de PR.
+    run_as:
+      service_principal_name: 2080d313-3074-4adf-8265-916ef7645dc2
+    # ── Workaround personal (comentado) ──
     # run_as:
-    #   service_principal_name: f36901fa-aa2a-47b1-9f1e-0d2553e79a6d
+    #   user_name: <tu_email_dev>@contratista.epm.co
     variables:
       catalog_name: epm_datalabs_catalog_dllo
       schema_name: facturacion
@@ -82,20 +89,16 @@ targets:
       db_dsn: "epm-to34.corp.epm.com.co:1521/SFUAT"
       oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
       db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      # ─── Etapa 2 ───
+      control_catalog: epm_datalabs_catalog_dllo
+      control_schema: facturacion
 
   # -------------------- PRUEBAS (UAT) --------------------
-  # Franz confirmó (05/Mar/2026):
-  #   - Catálogo destino UAT: epm_datalake_catalog_np (espejo de epm_datalabs_catalog_dllo en DLLO)
-  #   - Catálogo fuente UAT: epm_datalake_vol_np (lago compartido, solo lectura, igual que DLLO)
-  #   - SP de UAT ya tiene permisos de creación de clusters → se usa new_cluster (sin cluster_id fijo)
-  #   - Ambiente limpio: DABs crea jobs, cluster, modelo y endpoint desde cero
   uat:
     mode: production
     workspace:
       host: https://adb-6159907084216583.3.azuredatabricks.net
       root_path: /Shared/bundles/${bundle.name}/${bundle.target}
-    # SP de UAT (UAT_AZURE_SP_APPLICATION_ID en variable group databricks-MIDAS).
-    # Tiene permisos de creación de clusters y de asignarse permisos a sí mismo.
     run_as:
       service_principal_name: c0b3fdca-baec-4bab-9f08-c6e222d921ae
     variables:
@@ -118,6 +121,9 @@ targets:
       db_dsn: "epm-to34.corp.epm.com.co:1521/SFUAT"
       oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
       db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      # ─── Etapa 2 ───
+      control_catalog: epm_datalake_catalog_np
+      control_schema: facturacion
     resources:
       jobs:
         midas_load_transform_data:
@@ -145,7 +151,6 @@ targets:
     workspace:
       host: https://adb-5768199714870840.0.azuredatabricks.net
       root_path: /Shared/bundles/${bundle.name}/${bundle.target}
-    # SP de Prod (PROD_AZURE_SP_APPLICATION_ID del variable group databricks-MIDAS).
     run_as:
       service_principal_name: 1db15634-31b7-4f92-a976-fc8920216152
     variables:
@@ -168,14 +173,12 @@ targets:
       db_dsn: "epm-po34.corp.epm.com.co:1522/SFPDN"
       oracle_secret_scope: AZ-SecretScopeDBKS-EPM-PROD
       db_password_secret_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      # ─── Etapa 2 ───
+      control_catalog: epm_datalake_catalog_prod
+      control_schema: facturacion
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DEL CLUSTER COMPARTIDO POR LOS JOBS
-# Specs tomados del cluster DEV (0722-211855-e1a090ph):
-#   spark_version: 16.4.x-scala2.12 | node: Standard_DS4_v2 | USER_ISOLATION
-# Se usa new_cluster (en lugar de existing_cluster_id) para soportar UAT/Prod
-# donde el SP crea el cluster automáticamente. En DEV también se crea nuevo
-# cluster por job run (sin depender de un cluster specific encendido).
 # -----------------------------------------------------------------------------
 _job_cluster: &job_cluster
   job_cluster_key: midas_cluster
@@ -199,8 +202,12 @@ resources:
       email_notifications:
         on_success:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
         on_failure:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
       job_clusters:
         - *job_cluster
       tasks:
@@ -224,6 +231,11 @@ resources:
               - "${var.db_password_secret_key}"
               - "--output_path"
               - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+              # ─── Etapa 2 ───
+              - "--control_catalog"
+              - "${var.control_catalog}"
+              - "--control_schema"
+              - "${var.control_schema}"
 
         - task_key: actualizar_ordenes_calidad
           depends_on:
@@ -244,6 +256,11 @@ resources:
               - "${var.catalog_name}"
               - "--destination_schema"
               - "${var.schema_name}"
+              # ─── Etapa 2 ───
+              - "--control_catalog"
+              - "${var.control_catalog}"
+              - "--control_schema"
+              - "${var.control_schema}"
 
         - task_key: bronze_to_silver
           depends_on:
@@ -277,8 +294,11 @@ resources:
           run_job_task:
             job_id: ${resources.jobs.midas_agent_inference.id}
 
+      # ─── Etapa 2: schedule adelantado de 08:30 a 07:00 ───
+      # Asi la cadena (extraccion ~30 min + bronze ~5 min + silver/tools ~5 min)
+      # termina antes de las 08:00 y la inferencia downstream tiene aire de sobra.
       schedule:
-        quartz_cron_expression: "0 30 8 * * ?"
+        quartz_cron_expression: "0 0 7 * * ?"
         timezone_id: "America/Bogota"
         pause_status: UNPAUSED
       tags:
@@ -297,8 +317,12 @@ resources:
       email_notifications:
         on_success:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
         on_failure:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
       job_clusters:
         - *job_cluster
       tasks:
@@ -352,8 +376,6 @@ resources:
               - "${var.endpoint_name}"
               - "--endpoint_manager_user"
               - "${var.endpoint_manager_user}"
-      # Sin schedule: este job lo dispara el pipeline de Azure DevOps
-      # automáticamente tras cada bundle deploy (databricks bundle run).
       tags:
         Area: Facturación
         Tipo: LLMOps
@@ -367,8 +389,12 @@ resources:
       email_notifications:
         on_success:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
         on_failure:
           - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
       job_clusters:
         - *job_cluster
       tasks:

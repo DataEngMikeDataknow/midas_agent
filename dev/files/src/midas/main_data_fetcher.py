@@ -32,6 +32,13 @@ def parse_args():
                         help="Ruta al Oracle Instant Client. Omitir para usar modo Thin.")
     parser.add_argument("--output_path", required=True,
                         help="Ruta /Volumes/... donde se guardarán los archivos Parquet")
+    # ─── Etapa 2: parametros nuevos para el framework de control de cargas ───
+    parser.add_argument("--control_catalog", required=True,
+                        help="Catalogo donde viven midas_control_cargas y midas_log_cargas")
+    parser.add_argument("--control_schema", required=True,
+                        help="Schema donde viven midas_control_cargas y midas_log_cargas")
+    parser.add_argument("--id_ejecucion", default=None,
+                        help="UUID de la corrida. Si se omite, se genera uno nuevo.")
     return parser.parse_args()
 
 
@@ -72,21 +79,35 @@ def main():
     # Importar después de ajustar el path y las variables de entorno
     from midas.db import database as db
     from midas.db import processing
+    from midas.framework.control_cargas import ControlCargasClient
+    from midas.framework.chain_runner import ejecutar_cadena_extraccion
+    from pyspark.sql import SparkSession
 
     log.info(f"Iniciando extracción Oracle → {args.output_path}")
+
+    # ─── Etapa 2: cliente de control compartido por todos los pasos ───
+    spark = SparkSession.builder.getOrCreate()
+    usuario = None
+    try:
+        usuario = spark.sql("SELECT current_user() AS u").collect()[0]["u"]
+    except Exception:
+        usuario = "midas_framework"
+    control = ControlCargasClient(
+        spark=spark,
+        catalog=args.control_catalog,
+        schema=args.control_schema,
+        id_ejecucion=args.id_ejecucion,
+        usuario_ejecutor=usuario,
+    )
+    log.info("Control de cargas activo. id_ejecucion=%s", control.id_ejecucion)
 
     try:
         processing.ensure_data_dir()
         db.init_database()
 
-        df_ordenes_pendientes     = processing.run_query_ordenes_pendientes()
-        df_datos_basicos          = processing.run_query_datos_basicos(df_ordenes_pendientes)
-        df_datos_lecturas         = processing.run_query_datos_lectura(df_datos_basicos)
-        processing.run_query_datos_consumos(df_datos_lecturas)
-        df_ordenes_critica_previa = processing.run_query_ordenes_critica_previa(df_datos_lecturas)
-        processing.run_query_comentarios_ordenes(df_ordenes_critica_previa)
-        df_cuentas_cobro          = processing.run_query_cuentas_cobro(df_datos_basicos)
-        processing.run_query_detalle_cargos(df_cuentas_cobro)
+        # ─── Cadena envuelta en control (reemplaza el bloque anterior de llamadas sueltas) ───
+        ejecutar_cadena_extraccion(processing, control)
+
     finally:
         db.close_pool()
 
