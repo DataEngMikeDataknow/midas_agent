@@ -47,6 +47,13 @@ USING (
 ON  dest.catalog_destino = 'epm_datalabs_catalog_dllo'
 AND dest.schema_destino  = 'facturacion'
 AND dest.tabla_destino   = src.tabla_destino
+WHEN MATCHED THEN UPDATE SET
+    dest.tipo_carga         = 'FULL_CHAINED',
+    dest.query_key          = src.query_key,
+    dest.activa             = true,
+    dest.orden_ejecucion    = src.orden_ejecucion,
+    dest.columna_join       = src.columna_join,
+    dest.fecha_modificacion = current_timestamp()
 WHEN NOT MATCHED THEN INSERT (
     catalog_destino, schema_destino, tabla_destino,
     tipo_carga, query_key, activa, orden_ejecucion,
@@ -55,14 +62,7 @@ WHEN NOT MATCHED THEN INSERT (
     'epm_datalabs_catalog_dllo', 'facturacion', src.tabla_destino,
     'FULL_CHAINED', src.query_key, true, src.orden_ejecucion,
     src.columna_join, 'Cadena Midas 8 tablas - Etapa 2'
-)
-WHEN MATCHED THEN UPDATE SET
-    dest.tipo_carga         = 'FULL_CHAINED',
-    dest.query_key          = src.query_key,
-    dest.activa             = true,
-    dest.orden_ejecucion    = src.orden_ejecucion,
-    dest.columna_join       = src.columna_join,
-    dest.fecha_modificacion = current_timestamp();
+);
 
 -- ---------------------------------------------------------------------------
 -- 2. (Opcional) Resolver query_padre_id para reflejar las dependencias de la

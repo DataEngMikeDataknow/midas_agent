@@ -61,7 +61,7 @@ targets:
     default: true
     workspace:
       host: https://adb-1161217326944529.9.azuredatabricks.net
-      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+      #root_path: /Shared/bundles/${bundle.name}/${bundle.target}
     # ─── Etapa 2 (DEV) ───
     # Version final: el job corre como el Service Principal.
     # Workaround opcional: si quieres que corra como TU USUARIO para poder
@@ -96,7 +96,7 @@ targets:
       control_catalog: epm_datalabs_catalog_dllo
       control_schema: facturacion
       # ─── Workaround DEV: id del cluster compartido ───
-      shared_cluster_id_dev: 0120-142943-3slgxkot
+      shared_cluster_id_dev: 0722-211855-e1a090ph
 
   # -------------------- PRUEBAS (UAT) --------------------
   uat:
