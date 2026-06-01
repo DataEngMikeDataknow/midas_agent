@@ -61,17 +61,17 @@ targets:
     default: true
     workspace:
       host: https://adb-1161217326944529.9.azuredatabricks.net
-      root_path: /Shared/bundles/${workspace.current_user.userName}/${bundle.target}
+      
     # ─── Etapa 2 (DEV) ───
     # Version final: el job corre como el Service Principal.
     # Workaround opcional: si quieres que corra como TU USUARIO para poder
     # probar sin pedir permisos al SP, COMENTA la linea run_as de abajo y
     # DESCOMENTA la siguiente. Recuerda volver a la version SP antes de PR.
-    run_as:
-      service_principal_name: 2080d313-3074-4adf-8265-916ef7645dc2
+    #run_as:
+    #  service_principal_name: 2080d313-3074-4adf-8265-916ef7645dc2
     # ── Workaround personal (comentado) ──
-    # run_as:
-    #   user_name: <tu_email_dev>@contratista.epm.co
+    run_as:
+      user_name: mpalomin@contratista.epm.co
     variables:
       catalog_name: epm_datalabs_catalog_dllo
       schema_name: facturacion
