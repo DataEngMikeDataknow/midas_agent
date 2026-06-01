@@ -297,11 +297,11 @@ resources:
               - "--pipeline_sp"
               - "${var.pipeline_sp}"
 
-        - task_key: trigger_inference
-          depends_on:
-            - task_key: create_sql_functions
-          run_job_task:
-            job_id: ${resources.jobs.midas_agent_inference.id}
+        #- task_key: trigger_inference
+        #  depends_on:
+        #    - task_key: create_sql_functions
+        #  run_job_task:
+        #    job_id: ${resources.jobs.midas_agent_inference.id}
 
       # ─── Etapa 2: schedule adelantado de 08:30 a 07:00 ───
       # Asi la cadena (extraccion ~30 min + bronze ~5 min + silver/tools ~5 min)
