@@ -61,7 +61,7 @@ targets:
     default: true
     workspace:
       host: https://adb-1161217326944529.9.azuredatabricks.net
-      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+      root_path: /Shared/bundles/${workspace.current_user.userName}/${bundle.target}
     # ─── Etapa 2 (DEV) ───
     # Version final: el job corre como el Service Principal.
     # Workaround opcional: si quieres que corra como TU USUARIO para poder
