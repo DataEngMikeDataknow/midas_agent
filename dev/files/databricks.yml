@@ -282,20 +282,20 @@ resources:
               - "--schema"
               - "${var.schema_name}"
 
-        - task_key: create_sql_functions
-          depends_on:
-            - task_key: bronze_to_silver
-          # job_cluster_key: midas_cluster          # <-- COMENTADO workaround DEV
-          existing_cluster_id: ${var.shared_cluster_id_dev}   # <-- workaround DEV
-          spark_python_task:
-            python_file: ./src/midas/main_tools.py
-            parameters:
-              - "--catalog"
-              - "${var.catalog_name}"
-              - "--schema"
-              - "${var.schema_name}"
-              - "--pipeline_sp"
-              - "${var.pipeline_sp}"
+        # - task_key: create_sql_functions
+        #   depends_on:
+        #     - task_key: bronze_to_silver
+        #   # job_cluster_key: midas_cluster          # <-- COMENTADO workaround DEV
+        #   existing_cluster_id: ${var.shared_cluster_id_dev}   # <-- workaround DEV
+        #   spark_python_task:
+        #     python_file: ./src/midas/main_tools.py
+        #     parameters:
+        #       - "--catalog"
+        #       - "${var.catalog_name}"
+        #       - "--schema"
+        #       - "${var.schema_name}"
+        #       - "--pipeline_sp"
+        #       - "${var.pipeline_sp}"
 
         #- task_key: trigger_inference
         #  depends_on:
