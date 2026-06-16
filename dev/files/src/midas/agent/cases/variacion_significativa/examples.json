@@ -1,0 +1,43 @@
+[
+  {
+    "name": "variacion_normal_con_historial_estable",
+    "input_summary": {
+      "consumo_actual": 112,
+      "consumo_anterior": 105,
+      "promedio_ultimos_6": 108,
+      "observacion_lectura": null,
+      "ordenes_previas": []
+    },
+    "expected_output": {
+      "classification": "NORMAL",
+      "business_decision": "SIN_NOVEDAD",
+      "requires_human_review": false
+    }
+  },
+  {
+    "name": "datos_insuficientes_sin_consumo_anterior",
+    "input_summary": {
+      "consumo_actual": 180,
+      "consumo_anterior": null,
+      "historial_disponible": 1
+    },
+    "expected_output": {
+      "classification": "DATOS_INSUFICIENTES",
+      "business_decision": "REVISION_MANUAL",
+      "requires_human_review": true
+    }
+  },
+  {
+    "name": "posible_error_lectura",
+    "input_summary": {
+      "consumo_actual": 800,
+      "consumo_anterior": 90,
+      "observacion_lectura": "Lectura inconsistente frente al promedio histórico"
+    },
+    "expected_output": {
+      "classification": "ERROR_LECTURA",
+      "business_decision": "REQUIERE_VISITA",
+      "requires_human_review": true
+    }
+  }
+]

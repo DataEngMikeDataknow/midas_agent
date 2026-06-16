@@ -1,0 +1,70 @@
+{
+  "type": "object",
+  "required": [
+    "order_id",
+    "case_id",
+    "service_type",
+    "business_decision",
+    "technical_status",
+    "classification",
+    "confidence_score",
+    "requires_human_review",
+    "justification",
+    "evidence",
+    "rules_applied",
+    "data_quality_warnings"
+  ],
+  "properties": {
+    "order_id": {"type": "string"},
+    "case_id": {
+      "type": "string",
+      "const": "variacion_significativa_mes_anterior"
+    },
+    "service_type": {
+      "type": ["string", "null"],
+      "enum": ["agua", "energia", "gas", "acueducto", "alcantarillado", "energía", null]
+    },
+    "business_decision": {
+      "type": ["string", "null"],
+      "enum": ["SIN_NOVEDAD", "REQUIERE_AJUSTE", "REQUIERE_VISITA", "REVISION_MANUAL", null]
+    },
+    "technical_status": {
+      "type": "string",
+      "enum": [
+        "PROCESADA",
+        "ERROR_DATOS",
+        "ERROR_ENDPOINT",
+        "ERROR_TOOL",
+        "ERROR_VALIDACION_JSON",
+        "NO_SOPORTADA",
+        "PENDIENTE_REINTENTO"
+      ]
+    },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "NORMAL",
+        "VARIACION_NO_JUSTIFICADA",
+        "PNO",
+        "ESTACIONALIDAD",
+        "OBRA_NUEVA",
+        "ERROR_LECTURA",
+        "CONSTANTE_MAL_CONFIGURADA",
+        "DATOS_INSUFICIENTES",
+        "ERROR_TECNICO"
+      ]
+    },
+    "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "requires_human_review": {"type": "boolean"},
+    "justification": {"type": "string"},
+    "evidence": {"type": "array"},
+    "rules_applied": {"type": "array", "items": {"type": "string"}},
+    "data_quality_warnings": {"type": "array", "items": {"type": "string"}},
+    "error_code": {"type": ["string", "null"]},
+    "error_message": {"type": ["string", "null"]},
+    "model_version": {"type": ["string", "null"]},
+    "prompt_version": {"type": ["string", "null"]},
+    "run_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}
