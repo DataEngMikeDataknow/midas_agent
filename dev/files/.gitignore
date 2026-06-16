@@ -1,0 +1,40 @@
+#Configuraciones de Databricks
+.databricks
+
+# Entorno virtual
+.venv/
+venv/
+data_fetcher/venv/
+data_fetcher/.venv/
+data_fetcher/uv.lock
+
+# Archivos de configuración de IDEs
+.vscode
+
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+
+# Archivos de datos y configuraciones sensibles
+data_fetcher/data/
+data_fetcher/.env
+
+# Archivos de trabajo temporal de sesión (no pertenecen al repositorio)
+*.vtt
+*.pdf
+.coverage
+htmlcov/
+
+# Memoria interna de Claude Code (solo para uso local del asistente)
+.claude/
+
+# Reportes y documentos de sesión temporales
+25Feb2026_MIDAS.md
+26Feb2026_MIDAS_Reporte_Calidad.md
+INFORME_MIGRACION.md
+PLAN_TRABAJO.md
+QUALITY_REPORT.md
+REFACTORING_SUMMARY.md
+
+# Archivos de configuración de entorno (no deben ser compartidos)
+.env

@@ -1,10 +1,8 @@
 import json
 import os
 import re
-import sys
-import warnings
-from pathlib import Path
 from typing import Any, Callable, Generator, Optional
+import warnings
 
 import mlflow
 from databricks.sdk import WorkspaceClient
@@ -22,80 +20,40 @@ from openai import OpenAI
 from pydantic import BaseModel
 from unitycatalog.ai.core.base import get_uc_function_client
 
-# Permite importar midas.* cuando MLflow valida el modelo desde /Workspace/.../agent
 try:
-    _agent_dir = Path(__file__).resolve().parent
-    _bundle_root = _agent_dir.parent
-    _src_path = _bundle_root / "src"
-    if str(_src_path) not in sys.path:
-        sys.path.insert(0, str(_src_path))
-except Exception:
-    pass
+    from midas.agent.prompts import SYSTEM_PROMPT
+except ImportError:
+    from src.midas.agent.prompts import SYSTEM_PROMPT
 
-try:
-    from midas.agent_framework.prompt_loader import PromptLoader
-except Exception:
-    PromptLoader = None  # type: ignore
+############################################
+# Configuración del LLM y del catálogo/esquema.
+# Se leen desde variables de entorno para soportar múltiples ambientes
+# (dev/uat/prod) sin modificar el código. El job de despliegue (main_deploy.py)
+# es responsable de pasar MIDAS_CATALOG y MIDAS_SCHEMA al endpoint.
+############################################
+LLM_ENDPOINT_NAME = "databricks-gpt-oss-120b"
 
-
-LLM_ENDPOINT_NAME = os.environ.get("MIDAS_LLM_ENDPOINT_NAME", "databricks-gpt-oss-120b")
 CATALOG_NAME = os.environ.get("MIDAS_CATALOG", "epm_datalabs_catalog_dllo")
 SCHEMA_NAME = os.environ.get("MIDAS_SCHEMA", "facturacion")
 LLM_TIMEOUT_SECONDS = int(os.environ.get("MIDAS_LLM_TIMEOUT_SECONDS", "60"))
-AGENT_MAX_ITERATIONS = int(os.environ.get("MIDAS_AGENT_MAX_ITERATIONS", "10"))
-STAGE4_CASE_ID = os.environ.get("MIDAS_STAGE4_CASE_ID", "variacion_significativa_mes_anterior")
-STAGE4_PROMPT_FILE = os.environ.get("MIDAS_STAGE4_PROMPT_FILE", "variacion_significativa/prompt.md")
-STAGE4_TOOL_NAMES_RAW = os.environ.get(
-    "MIDAS_STAGE4_TOOL_NAMES",
-    "get_contexto_variacion_significativa,get_historial_consumo_producto,get_contexto_observaciones_calidad",
-)
+AGENT_MAX_ITERATIONS = int(os.environ.get("MIDAS_AGENT_MAX_ITERATIONS", "5"))
 
-
-def _load_system_prompt() -> str:
-    if PromptLoader is not None:
-        try:
-            return PromptLoader().load(STAGE4_PROMPT_FILE)
-        except Exception:
-            pass
-
-    # Fallback mínimo para que el modelo siga funcionando si el prompt markdown no fue empacado.
-    return f"""
-Eres un Analista Senior de Calidad de Facturación para EPM.
-Analiza la casuística {STAGE4_CASE_ID} usando las herramientas disponibles.
-Devuelve únicamente JSON válido con los campos: order_id, case_id, service_type,
-business_decision, justification, confidence_score, requires_human_review,
-cause_category, recommended_action, evidence, rules_applied y data_quality_warnings.
-""".strip()
-
-
-SYSTEM_PROMPT = _load_system_prompt()
-
-
+###############################################################################
+## Tools del agente: SQL Functions registradas en Unity Catalog.
+## Se construyen dinámicamente desde las variables de entorno.
+## https://learn.microsoft.com/azure/databricks/generative-ai/agent-framework/agent-tool
+###############################################################################
 class ToolInfo(BaseModel):
+    """
+    Representa una herramienta (tool) del agente.
+    - name: Nombre de la herramienta.
+    - spec: Especificación JSON (formato OpenAI Responses).
+    - exec_fn: Función que ejecuta la herramienta.
+    """
+
     name: str
     spec: dict
     exec_fn: Callable
-
-
-def _parse_tool_names(raw_value: str) -> list[str]:
-    raw_value = (raw_value or "").strip()
-    if not raw_value:
-        return []
-    try:
-        parsed = json.loads(raw_value)
-        if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
-    except Exception:
-        pass
-    return [item.strip() for item in raw_value.split(",") if item.strip()]
-
-
-def _to_full_uc_name(tool_name: str) -> str:
-    if tool_name.count(".") == 2:
-        return tool_name
-    if tool_name.count(".") == 1:
-        return f"{CATALOG_NAME}.{tool_name}"
-    return f"{CATALOG_NAME}.{SCHEMA_NAME}.{tool_name}"
 
 
 def create_tool_info(tool_spec, exec_fn_param: Optional[Callable] = None):
@@ -113,14 +71,14 @@ def create_tool_info(tool_spec, exec_fn_param: Optional[Callable] = None):
         udf_name = f"{CATALOG_NAME}.{udf_name}"
     elif len(udf_name_parts) != 3:
         raise ValueError(
-            f"Nombre de herramienta inválido '{tool_name}'. Se convirtió en '{udf_name}'."
+            f"Error al procesar el nombre de la herramienta '{tool_name}'. "
+            f"Se convirtió en '{udf_name}', que no tiene 2 o 3 partes separadas por '.'."
         )
 
     def _coerce_uc_value(value: Any) -> Any:
+        # UC functions tipadas fallan si el LLM devuelve un entero como texto.
         if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
             return int(value)
-        if isinstance(value, str) and re.fullmatch(r"-?\d+\.\d+", value):
-            return float(value)
         if isinstance(value, list):
             return [_coerce_uc_value(item) for item in value]
         if isinstance(value, dict):
@@ -138,42 +96,65 @@ def create_tool_info(tool_spec, exec_fn_param: Optional[Callable] = None):
     return ToolInfo(name=tool_name, spec=tool_spec, exec_fn=exec_fn_param or exec_fn)
 
 
-UC_TOOL_NAMES = [_to_full_uc_name(name) for name in _parse_tool_names(STAGE4_TOOL_NAMES_RAW)]
+TOOL_INFOS = []
+
+UC_TOOL_NAMES = [
+    f"{CATALOG_NAME}.{SCHEMA_NAME}.get_hist_fact",
+    f"{CATALOG_NAME}.{SCHEMA_NAME}.get_ordenes_critica",
+]
+
 uc_toolkit = UCFunctionToolkit(function_names=UC_TOOL_NAMES)
 uc_function_client = get_uc_function_client()
-TOOL_INFOS = [create_tool_info(tool_spec) for tool_spec in uc_toolkit.tools]
+for tool_spec in uc_toolkit.tools:
+    TOOL_INFOS.append(create_tool_info(tool_spec))
+
+VECTOR_SEARCH_TOOLS = []
+for vs_tool in VECTOR_SEARCH_TOOLS:
+    TOOL_INFOS.append(create_tool_info(vs_tool.tool, vs_tool.execute))
 
 
-class Stage4ToolCallingAgent(ResponsesAgent):
-    """Agente Stage 4 configurable por casuística y tools Unity Catalog."""
+class ToolCallingAgent(ResponsesAgent):
+    """Agente que llama herramientas (SQL Functions) para analizar órdenes de calidad."""
 
     def __init__(self, llm_endpoint: str, tools: list[ToolInfo]):
+        """Inicializa el agente con el endpoint LLM y sus herramientas."""
         self.llm_endpoint = llm_endpoint
         self.workspace_client = WorkspaceClient()
-        self._model_serving_client: Optional[OpenAI] = None
+        self._model_serving_client: Optional[OpenAI] = None  # lazy init
         self._tools_dict = {tool.name: tool for tool in tools}
 
     @property
     def model_serving_client(self) -> OpenAI:
+        """Crea el cliente OpenAI en el primer uso (evita fallo en validación MLflow)."""
         if self._model_serving_client is None:
             try:
-                self._model_serving_client = self.workspace_client.serving_endpoints.get_open_ai_client()
+                self._model_serving_client = (
+                    self.workspace_client.serving_endpoints.get_open_ai_client()
+                )
             except AttributeError:
+                # Fallback compatible con varias versiones del databricks-sdk:
+                # algunas exponen authenticate() -> headers y otras requieren
+                # authenticate(headers) mutando el dict recibido.
                 cfg = self.workspace_client.config
                 try:
-                    auth_headers = cfg.authenticate()
+                    _auth_headers = cfg.authenticate()
                 except TypeError:
-                    auth_headers = {}
-                    cfg.authenticate(auth_headers)
-                token = auth_headers.get("Authorization", "Bearer ").split()[-1]
-                self._model_serving_client = OpenAI(api_key=token, base_url=f"{cfg.host}/serving-endpoints")
+                    _auth_headers = {}
+                    cfg.authenticate(_auth_headers)
+                _token = _auth_headers.get("Authorization", "Bearer ").split()[-1]
+                self._model_serving_client = OpenAI(
+                    api_key=_token,
+                    base_url=f"{cfg.host}/serving-endpoints",
+                )
         return self._model_serving_client
 
     def get_tool_specs(self) -> list[dict]:
+        """Retorna las especificaciones de herramientas en formato OpenAI."""
         return [tool_info.spec for tool_info in self._tools_dict.values()]
 
     @mlflow.trace(span_type=SpanType.TOOL)
     def execute_tool(self, tool_name: str, args: dict) -> Any:
+        """Ejecuta la herramienta especificada con los argumentos dados."""
         return self._tools_dict[tool_name].exec_fn(**args)
 
     def call_llm(self, messages: list[dict[str, Any]]) -> Generator[dict[str, Any], None, None]:
@@ -191,10 +172,17 @@ class Stage4ToolCallingAgent(ResponsesAgent):
                 if len(chunk_dict.get("choices", [])) > 0:
                     yield chunk_dict
 
-    def handle_tool_call(self, tool_call: dict[str, Any], messages: list[dict[str, Any]]) -> ResponsesAgentStreamEvent:
+    def handle_tool_call(
+        self,
+        tool_call: dict[str, Any],
+        messages: list[dict[str, Any]],
+    ) -> ResponsesAgentStreamEvent:
+        """Ejecuta un tool call, lo agrega al historial y retorna el evento de resultado."""
         arguments_str = tool_call.get("arguments")
         args = json.loads(arguments_str) if arguments_str else {}
+
         result = str(self.execute_tool(tool_name=tool_call["name"], args=args))
+
         tool_call_output = self.create_function_call_output_item(tool_call["call_id"], result)
         messages.append(tool_call_output)
         return ResponsesAgentStreamEvent(type="response.output_item.done", item=tool_call_output)
@@ -208,10 +196,13 @@ class Stage4ToolCallingAgent(ResponsesAgent):
             last_msg = messages[-1]
             if last_msg.get("role") == "assistant":
                 return
-            if last_msg.get("type") == "function_call":
+            elif last_msg.get("type") == "function_call":
                 yield self.handle_tool_call(last_msg, messages)
             else:
-                yield from output_to_responses_items_stream(chunks=self.call_llm(messages), aggregator=messages)
+                yield from output_to_responses_items_stream(
+                    chunks=self.call_llm(messages), aggregator=messages
+                )
+
         raise RuntimeError(f"Agent max iterations reached ({max_iter}). Stopping.")
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
@@ -222,17 +213,20 @@ class Stage4ToolCallingAgent(ResponsesAgent):
         ]
         return ResponsesAgentResponse(output=outputs, custom_outputs=request.custom_inputs)
 
-    def predict_stream(self, request: ResponsesAgentRequest) -> Generator[ResponsesAgentStreamEvent, None, None]:
-        messages = to_chat_completions_input([item.model_dump() for item in request.input])
+    def predict_stream(
+        self, request: ResponsesAgentRequest
+    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        messages = to_chat_completions_input([i.model_dump() for i in request.input])
         if SYSTEM_PROMPT:
             messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
         yield from self.call_and_run_tools(messages=messages, max_iter=AGENT_MAX_ITERATIONS)
 
 
+# Registro del modelo en MLflow
+# Guard against uninitialized trace provider during MLflow validation import
 try:
     mlflow.openai.autolog()
 except Exception:
     pass
-
-AGENT = Stage4ToolCallingAgent(llm_endpoint=LLM_ENDPOINT_NAME, tools=TOOL_INFOS)
+AGENT = ToolCallingAgent(llm_endpoint=LLM_ENDPOINT_NAME, tools=TOOL_INFOS)
 mlflow.models.set_model(AGENT)
