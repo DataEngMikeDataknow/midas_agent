@@ -1,0 +1,69 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "order_id",
+    "case_id",
+    "service_type",
+    "business_decision",
+    "classification_category",
+    "justification",
+    "confidence_score",
+    "requires_human_review",
+    "recommended_action",
+    "evidence",
+    "rules_applied",
+    "data_quality_warnings",
+    "model_version",
+    "prompt_version"
+  ],
+  "properties": {
+    "order_id": {"type": "string"},
+    "case_id": {"type": "string", "const": "variacion_significativa_mes_anterior"},
+    "service_type": {"type": ["string", "null"]},
+    "business_decision": {
+      "type": "string",
+      "enum": ["SIN_NOVEDAD", "REQUIERE_AJUSTE", "REQUIERE_VISITA", "REVISION_MANUAL"]
+    },
+    "classification_category": {
+      "type": ["string", "null"],
+      "enum": [
+        "NORMAL",
+        "CONSTANTE_MAL_CONFIGURADA",
+        "PNO",
+        "ESTACIONAL",
+        "OBRA_NUEVA",
+        "ERROR_LECTURA",
+        "LECTURA_ESTIMADA_O_CORREGIDA",
+        "CAMBIO_PATRON_CONSUMO",
+        "HISTORIAL_INSUFICIENTE",
+        "DATOS_INCONSISTENTES",
+        "VARIACION_NO_EXPLICADA",
+        "RECLAMO_OBSERVACION",
+        "OTRO",
+        null
+      ]
+    },
+    "justification": {"type": "string", "maxLength": 2000},
+    "confidence_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "requires_human_review": {"type": "boolean"},
+    "recommended_action": {"type": ["string", "null"]},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "field", "value", "description"],
+        "properties": {
+          "source": {"type": "string"},
+          "field": {"type": "string"},
+          "value": {},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "rules_applied": {"type": "array", "items": {"type": "string"}},
+    "data_quality_warnings": {"type": "array", "items": {"type": "string"}},
+    "model_version": {"type": ["string", "null"]},
+    "prompt_version": {"type": "string"}
+  }
+}

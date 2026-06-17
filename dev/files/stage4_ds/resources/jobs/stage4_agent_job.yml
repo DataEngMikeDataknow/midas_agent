@@ -1,0 +1,35 @@
+resources:
+  jobs:
+    midas_stage4_agent_dev:
+      name: midas-stage4-agent-dev
+      tasks:
+        - task_key: setup_stage4
+          notebook_task:
+            notebook_path: ../notebooks/stage4/00_setup_stage4.py
+            base_parameters:
+              config_path: ../conf/stage4_config.json
+        - task_key: build_features
+          depends_on:
+            - task_key: setup_stage4
+          notebook_task:
+            notebook_path: ../notebooks/stage4/01_build_stage4_features.py
+            base_parameters:
+              config_path: ../conf/stage4_config.json
+        - task_key: create_sql_functions
+          depends_on:
+            - task_key: build_features
+          notebook_task:
+            notebook_path: ../notebooks/stage4/02_create_sql_functions.py
+            base_parameters:
+              config_path: ../conf/stage4_config.json
+              grant_account_users: "false"
+        - task_key: run_inference
+          depends_on:
+            - task_key: create_sql_functions
+          notebook_task:
+            notebook_path: ../notebooks/stage4/03_run_batch_inference.py
+            base_parameters:
+              config_path: ../conf/stage4_config.json
+              limit: "300"
+              max_workers: "8"
+      max_concurrent_runs: 1
