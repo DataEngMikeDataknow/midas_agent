@@ -76,20 +76,22 @@ COMMENTS_MAP = {
 
 def _normalize_sources(spark, cfg: Stage4Config) -> None:
     source = cfg.source_tables
-    select_normalized(spark.table(cfg.table("ordenes_pendientes")), ORDER_MAP).createOrReplaceTempView("stg4_ordenes")
-    select_normalized(spark.table(cfg.table("datos_basicos")), BASIC_MAP).createOrReplaceTempView("stg4_basicos")
-    select_normalized(spark.table(cfg.table("consumos")), CONSUMPTION_MAP).createOrReplaceTempView("stg4_consumos")
-    select_normalized(spark.table(cfg.table("lecturas")), READING_MAP).createOrReplaceTempView("stg4_lecturas")
-    select_normalized(spark.table(cfg.table("ordenes_previa_critica")), CRITIC_MAP).createOrReplaceTempView("stg4_critica")
-    select_normalized(spark.table(cfg.table("comentarios_ordenes")), COMMENTS_MAP).createOrReplaceTempView("stg4_comentarios")
+    select_normalized(spark.table(cfg.source_table("ordenes_pendientes")), ORDER_MAP).createOrReplaceTempView("stg4_ordenes")
+    select_normalized(spark.table(cfg.source_table("datos_basicos")), BASIC_MAP).createOrReplaceTempView("stg4_basicos")
+    select_normalized(spark.table(cfg.source_table("consumos")), CONSUMPTION_MAP).createOrReplaceTempView("stg4_consumos")
+    select_normalized(spark.table(cfg.source_table("lecturas")), READING_MAP).createOrReplaceTempView("stg4_lecturas")
+    select_normalized(spark.table(cfg.source_table("ordenes_previa_critica")), CRITIC_MAP).createOrReplaceTempView("stg4_critica")
+    select_normalized(spark.table(cfg.source_table("comentarios_ordenes")), COMMENTS_MAP).createOrReplaceTempView("stg4_comentarios")
 
 
 def build_stage4_feature_tables(spark, cfg: Stage4Config) -> None:
-    """Builds normalized Silver tables required by the Stage 4 agent.
+    """Builds Stage 4 feature tables from upstream Silver sources only.
 
-    The upstream Stage 2/3 project may change exact column names. This function
-    normalizes common candidates and leaves unavailable fields as NULL, so the
-    agent can still apply mandatory data-quality rules instead of failing.
+    The Stage 4 contract assumes that Engineering Data already produced Silver
+    tables. This function does not consume Silver tables and does not run
+    ingestion logic. It normalizes common Silver column candidates and leaves
+    unavailable fields as NULL, so the agent can apply mandatory data-quality
+    rules instead of failing.
     """
     _normalize_sources(spark, cfg)
 

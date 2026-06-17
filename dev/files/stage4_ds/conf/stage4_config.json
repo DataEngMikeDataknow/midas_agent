@@ -12,14 +12,14 @@
     "write_mode": "append"
   },
   "source_tables": {
-    "ordenes_pendientes": "midas_ordenes_calidad_pendientes_bronze",
-    "datos_basicos": "midas_datos_basicos_producto_bronze",
-    "lecturas": "midas_datos_lecturas_producto_bronze",
-    "consumos": "midas_datos_consumos_producto_bronze",
-    "ordenes_previa_critica": "midas_datos_ordenes_previa_critica_bronze",
-    "comentarios_ordenes": "midas_datos_comentarios_ordenes_bronze",
-    "cuentas_cobro": "midas_datos_cuentas_cobro_bronze",
-    "detalle_cargos": "midas_datos_detalle_cargos_bronze"
+    "ordenes_pendientes": "midas_ordenes_calidad_pendientes_silver",
+    "datos_basicos": "midas_datos_basicos_producto_silver",
+    "lecturas": "midas_datos_lecturas_producto_silver",
+    "consumos": "midas_datos_consumos_producto_silver",
+    "ordenes_previa_critica": "midas_datos_ordenes_previa_critica_silver",
+    "comentarios_ordenes": "midas_datos_comentarios_ordenes_silver",
+    "cuentas_cobro": "midas_datos_cuentas_cobro_silver",
+    "detalle_cargos": "midas_datos_detalle_cargos_silver"
   },
   "stage4_tables": {
     "features": "midas_stage4_ordenes_features_silver",
@@ -36,5 +36,10 @@
     "consumo_anterior_minimo": 1.0,
     "historial_periodos_minimos": 3,
     "confidence_min_auto": 0.72
+  },
+  "source_layer": "silver",
+  "source_contract": {
+    "enforce_silver_only_inputs": true,
+    "description": "La Etapa 4 consume exclusivamente tablas Silver entregadas por Ingeniería de Datos. No lee tablas Bronze ni ejecuta lógica de ingesta."
   }
 }

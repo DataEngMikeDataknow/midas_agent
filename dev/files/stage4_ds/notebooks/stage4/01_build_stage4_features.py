@@ -3,7 +3,7 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC # MIDAS Stage 4 - Construcción de features Silver
-# MAGIC Normaliza las tablas Bronze disponibles y construye los insumos para el agente.
+# MAGIC Consume únicamente tablas Silver y construye los insumos de Stage 4 para el agente.
 
 # COMMAND ----------
 import sys
@@ -21,6 +21,8 @@ from midas_stage4.feature_builder import build_stage4_feature_tables
 dbutils.widgets.text("config_path", "")
 config_path = dbutils.widgets.get("config_path") or None
 cfg = Stage4Config.load(config_path)
+print("Source layer:", cfg.source_layer)
+print("Silver sources:", cfg.source_tables)
 
 build_stage4_feature_tables(spark, cfg)
 

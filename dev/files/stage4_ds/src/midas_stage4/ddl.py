@@ -36,7 +36,7 @@ def create_stage4_tables(spark, cfg: Stage4Config) -> None:
     TBLPROPERTIES (
         delta.autoOptimize.optimizeWrite = true,
         delta.autoOptimize.autoCompact = true,
-        comment = 'Resultados Gold del agente Stage 4 MIDAS para órdenes de calidad'
+        comment = 'Resultados del agente Stage 4 MIDAS para órdenes de calidad'
     )
     """)
 

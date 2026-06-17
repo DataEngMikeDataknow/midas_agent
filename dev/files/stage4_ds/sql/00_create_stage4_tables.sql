@@ -1,4 +1,6 @@
--- Parameter placeholders: replace ${catalog} and ${schema} in Databricks SQL or run notebooks/00_setup.py.
+-- Parameter placeholders: replace ${catalog} and ${schema} in Databricks SQL
+-- or run notebooks/stage4/00_setup_stage4.py, which uses conf/stage4_config.json.
+
 CREATE SCHEMA IF NOT EXISTS ${catalog}.${schema};
 
 CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_stage4_decisiones_agente_gold (
@@ -48,4 +50,27 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_stage4_analista_referencia
   analyst_observation STRING,
   analyst_name STRING,
   labeled_at TIMESTAMP
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_stage4_metricas_evaluacion_gold (
+  run_id STRING,
+  evaluated_at TIMESTAMP,
+  metric_name STRING,
+  metric_value DOUBLE,
+  metric_detail STRING
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_stage4_discrepancias_gold (
+  run_id STRING,
+  detected_at TIMESTAMP,
+  order_id STRING,
+  agent_decision STRING,
+  analyst_decision STRING,
+  agent_category STRING,
+  analyst_category STRING,
+  confidence_score DOUBLE,
+  justification STRING,
+  analyst_observation STRING,
+  suggested_action STRING,
+  candidate_fewshot_json STRING
 ) USING DELTA;
