@@ -1,3 +1,0 @@
-requests>=2.31.0
-# databricks-sdk is usually available in Databricks Runtime/Jobs. Keep it explicit for local/unit validation.
-databricks-sdk>=0.35.0

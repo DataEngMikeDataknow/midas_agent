@@ -13,20 +13,6 @@ variables:
     default: facturacion
   endpoint_name:
     description: Nombre del Endpoint de Serving donde se desplegará el agente
-  stage4_endpoint_name:
-    description: Nombre del endpoint de Serving para el agente Stage 4 de variación significativa
-  stage4_model_name:
-    description: Nombre del modelo UC para el agente Stage 4
-    default: midas_stage4_agent_model
-  stage4_case_id:
-    description: Casuística Stage 4 a ejecutar
-    default: variacion_significativa_mes_anterior
-  stage4_activity_filter:
-    description: Filtro textual de actividad para seleccionar órdenes de variación significativa
-    default: VARIACION SIGNIFICATIVA
-  stage4_target_table:
-    description: Tabla Gold para resultados del agente Stage 4
-    default: midas_predicciones_agente_stage4_gold
   experiment_path:
     description: Ruta completa de MLflow donde se registrarán las corridas
   source_catalog:
@@ -94,11 +80,6 @@ targets:
       source_volume: facturacion_bronze_vol
       source_base_path: midas_agent
       endpoint_name: agente_ordenes_calidad_dev_v3
-      stage4_endpoint_name: agente_ordenes_calidad_stage4_dev
-      stage4_model_name: midas_stage4_agent_model
-      stage4_case_id: variacion_significativa_mes_anterior
-      stage4_activity_filter: VARIACION SIGNIFICATIVA
-      stage4_target_table: midas_predicciones_agente_stage4_gold
       experiment_path: /Users/ssuarecr@contratista.epm.co/midas_agent_experiment
       pipeline_sp: 2080d313-3074-4adf-8265-916ef7645dc2
       endpoint_manager_user: frans.taboada@epm.com.co
@@ -133,11 +114,6 @@ targets:
       source_volume: facturacion_bronze_vol
       source_base_path: midas_agent
       endpoint_name: agente_ordenes_calidad_uat
-      stage4_endpoint_name: agente_ordenes_calidad_stage4_uat
-      stage4_model_name: midas_stage4_agent_model
-      stage4_case_id: variacion_significativa_mes_anterior
-      stage4_activity_filter: VARIACION SIGNIFICATIVA
-      stage4_target_table: midas_predicciones_agente_stage4_gold
       experiment_path: /Users/c0b3fdca-baec-4bab-9f08-c6e222d921ae/midas_agent_experiment_uat
       pipeline_sp: c0b3fdca-baec-4bab-9f08-c6e222d921ae
       endpoint_manager_user: frans.taboada@epm.com.co
@@ -173,18 +149,6 @@ targets:
               service_principal_name: ${var.pipeline_sp}
             - level: CAN_MANAGE
               user_name: frans.taboada@epm.com.co
-        midas_stage4_agent_deploy_ops:
-          permissions:
-            - level: CAN_MANAGE
-              service_principal_name: ${var.pipeline_sp}
-            - level: CAN_MANAGE
-              user_name: frans.taboada@epm.com.co
-        midas_stage4_agent_inference:
-          permissions:
-            - level: CAN_MANAGE
-              service_principal_name: ${var.pipeline_sp}
-            - level: CAN_MANAGE
-              user_name: frans.taboada@epm.com.co
 
   # -------------------- PRODUCCIÓN (PROD) --------------------
   prod:
@@ -202,11 +166,6 @@ targets:
       source_volume: facturacion_bronze_vol
       source_base_path: midas_agent
       endpoint_name: agente_ordenes_calidad_prod
-      stage4_endpoint_name: agente_ordenes_calidad_stage4_prod
-      stage4_model_name: midas_stage4_agent_model
-      stage4_case_id: variacion_significativa_mes_anterior
-      stage4_activity_filter: VARIACION SIGNIFICATIVA
-      stage4_target_table: midas_predicciones_agente_stage4_gold
       experiment_path: /Users/1db15634-31b7-4f92-a976-fc8920216152/midas_agent_experiment_prod
       pipeline_sp: 1db15634-31b7-4f92-a976-fc8920216152
       endpoint_manager_user: frans.taboada@epm.com.co
@@ -475,10 +434,9 @@ resources:
         Area: Facturación
         Tipo: LLMOps
 
-
-    # JOB 4: ETAPA 4 - DESPLIEGUE DEL NUEVO AGENTE INTELIGENTE
-    midas_stage4_agent_deploy_ops:
-      name: midas_stage4_agent_deploy_ops
+    # JOB 4: ETAPA 4 - NUEVO AGENTE INTELIGENTE ORDENES DE CALIDAD
+    midas_stage4_agent_quality_orders:
+      name: midas_stage4_agent_quality_orders
       permissions:
         - level: CAN_MANAGE
           service_principal_name: ${var.pipeline_sp}
@@ -497,97 +455,44 @@ resources:
         - task_key: create_stage4_sql_functions
           job_cluster_key: midas_cluster
           spark_python_task:
-            python_file: ./src/midas/main_tools_stage4.py
+            python_file: ./src/midas/main_stage4_tools.py
             parameters:
               - "--catalog"
               - "${var.catalog_name}"
               - "--schema"
               - "${var.schema_name}"
-              - "--pipeline_sp"
-              - "${var.pipeline_sp}"
-              - "--grant_account_users"
-              - "false"
 
-        - task_key: deploy_stage4_agent_version
+        - task_key: ejecutar_stage4_agent
           depends_on:
             - task_key: create_stage4_sql_functions
           job_cluster_key: midas_cluster
           spark_python_task:
-            python_file: ./src/midas/main_deploy_stage4.py
+            python_file: ./src/midas/main_stage4_agent.py
             parameters:
               - "--catalog"
               - "${var.catalog_name}"
               - "--schema"
               - "${var.schema_name}"
-              - "--model_name"
-              - "${var.stage4_model_name}"
-              - "--endpoint_name"
-              - "${var.stage4_endpoint_name}"
-              - "--experiment_path"
-              - "${var.experiment_path}"
-              - "--endpoint_workload_size"
-              - "${var.endpoint_workload_size}"
-              - "--endpoint_scale_to_zero_enabled"
-              - "${var.endpoint_scale_to_zero_enabled}"
-              - "--agent_llm_timeout_seconds"
-              - "${var.agent_llm_timeout_seconds}"
-              - "--agent_max_iterations"
-              - "${var.agent_max_iterations}"
-              - "--pipeline_sp"
-              - "${var.pipeline_sp}"
-              - "--case_id"
-              - "${var.stage4_case_id}"
-              - "--prompt_file"
-              - "variacion_significativa/prompt.md"
-      tags:
-        Area: Facturación
-        Tipo: LLMOps
-        Etapa: "4"
-        Casuistica: VariacionSignificativa
-
-    # JOB 5: ETAPA 4 - INFERENCIA BATCH DEL NUEVO AGENTE INTELIGENTE
-    midas_stage4_agent_inference:
-      name: midas_stage4_agent_inference
-      permissions:
-        - level: CAN_MANAGE
-          service_principal_name: ${var.pipeline_sp}
-      email_notifications:
-        on_success:
-          - jonatan.londono@epm.com.co
-          - mpalomin@contratista.epm.co
-          - jcordori@contratista.epm.co
-        on_failure:
-          - jonatan.londono@epm.com.co
-          - mpalomin@contratista.epm.co
-          - jcordori@contratista.epm.co
-      job_clusters:
-        - *job_cluster
-      tasks:
-        - task_key: stage4_batch_inference
-          job_cluster_key: midas_cluster
-          spark_python_task:
-            python_file: ./src/midas/main_inference_stage4.py
-            parameters:
-              - "--catalog"
-              - "${var.catalog_name}"
-              - "--schema"
-              - "${var.schema_name}"
+              - "--ambiente"
+              - "${bundle.target}"
+              - "--fecha_proceso"
+              - "{{job.start_time.iso_date}}"
+              - "--limite_ordenes"
+              - "300"
+              - "--modo_ejecucion"
+              - "persistente"
               - "--model_endpoint"
-              - "${var.stage4_endpoint_name}"
-              - "--case_id"
-              - "${var.stage4_case_id}"
-              - "--activity_filter"
-              - "${var.stage4_activity_filter}"
-              - "--request_timeout_seconds"
-              - "60"
-              - "--max_retries"
-              - "3"
-              - "--source_table"
-              - "midas_ordenes_calidad_pendientes_silver"
-              - "--target_table"
-              - "${var.stage4_target_table}"
+              - "${var.endpoint_name}"
+              - "--prompt_version"
+              - "stage4-v1.0.0"
+              - "--model_version"
+              - "${var.endpoint_name}"
+              - "--umbral_variacion"
+              - "0.30"
+      schedule:
+        quartz_cron_expression: "0 30 8 * * ?"
+        timezone_id: "America/Bogota"
+        pause_status: PAUSED
       tags:
         Area: Facturación
-        Tipo: LLMOps
-        Etapa: "4"
-        Casuistica: VariacionSignificativa
+        Tipo: Stage4-Agent
