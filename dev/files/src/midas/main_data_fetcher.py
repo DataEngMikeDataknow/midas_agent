@@ -57,18 +57,7 @@ def main():
     if args.oracle_client_lib_dir:
         os.environ["ORACLE_CLIENT_LIB_DIR"] = args.oracle_client_lib_dir
 
-    # __file__ no esta definido en ipykernel de Databricks; sys.argv[0] es el fallback (BUG-001).
-    try:
-        _script_dir = os.path.dirname(os.path.abspath(__file__))
-    except NameError:
-        _script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-
-    _project_root = os.path.normpath(os.path.join(_script_dir, "..", ".."))
-    if _project_root not in sys.path:
-        sys.path.insert(0, _project_root)
-    _src_dir = os.path.join(_project_root, "src")
-    if _src_dir not in sys.path:
-        sys.path.insert(0, _src_dir)
+    _bootstrap_midas_import_path()
 
     from midas.db import database as db
     from midas.db import processing

@@ -119,6 +119,16 @@ class UnityCatalogDataAccess:
         df = self._filter_date_if_possible(df, fecha_proceso)
         return self.collect(df, limit=limit)
 
+    def get_ordenes_pendientes(self, limite: int = 10, fecha_proceso: Optional[str] = None) -> DataFrame:
+        """Alias de conveniencia para pruebas en notebooks de Databricks.
+
+        Devuelve un DataFrame para poder usar display(df). El procesamiento batch
+        productivo debe seguir usando list_pending_orders(), que retorna dicts.
+        """
+        df = self.table(QueryKey.ORDENES_PENDIENTES)
+        df = self._filter_date_if_possible(df, fecha_proceso)
+        return df.limit(int(limite))
+
     def get_order_by_id(self, orden_id: str) -> Optional[dict[str, Any]]:
         df = self.table(QueryKey.ORDENES_PENDIENTES)
         df = self._filter_if_column_exists(df, ("orden_id", "id_orden", "order_id"), orden_id)
