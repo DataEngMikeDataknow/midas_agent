@@ -85,3 +85,4 @@ STAGE4_SQL_FUNCTION_NAMES: Final[tuple[str, ...]] = (
 OUTPUT_RESULT_TABLE = "midas_agente_ordenes_calidad_resultados_gold"
 OUTPUT_LOG_TABLE = "midas_agente_ordenes_calidad_logs"
 OUTPUT_METRICS_TABLE = "midas_agente_ordenes_calidad_metricas"
+OUTPUT_EVALUATION_TABLE = "midas_agente_ordenes_calidad_evaluacion"

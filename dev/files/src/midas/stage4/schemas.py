@@ -152,3 +152,21 @@ CREATE TABLE IF NOT EXISTS {full_table} (
 USING DELTA
 COMMENT 'Métricas de ejecución e inferencia de Etapa 4.'
 """
+
+EVALUATION_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {full_table} (
+  run_id STRING,
+  fecha_proceso DATE,
+  ambiente STRING,
+  total_evaluado BIGINT,
+  comparables_con_analista BIGINT,
+  accuracy DOUBLE,
+  porcentaje_json_valido DOUBLE,
+  tasa_revision_humana DOUBLE,
+  discrepancias_json STRING,
+  metricas_json STRING,
+  created_at TIMESTAMP
+)
+USING DELTA
+COMMENT 'Evaluación batch del agente Etapa 4 comparada contra criterio del analista.'
+"""

@@ -62,3 +62,18 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_met
   timestamp_metricas TIMESTAMP
 )
 USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_evaluacion (
+  run_id STRING,
+  fecha_proceso DATE,
+  ambiente STRING,
+  total_evaluado BIGINT,
+  comparables_con_analista BIGINT,
+  accuracy DOUBLE,
+  porcentaje_json_valido DOUBLE,
+  tasa_revision_humana DOUBLE,
+  discrepancias_json STRING,
+  metricas_json STRING,
+  created_at TIMESTAMP
+)
+USING DELTA;

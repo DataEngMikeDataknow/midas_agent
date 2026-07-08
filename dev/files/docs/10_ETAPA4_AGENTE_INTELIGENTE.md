@@ -162,3 +162,39 @@ feat(stage4): agregar runner databricks para dry-run y modo persistente
 test(stage4): cubrir schema reglas data access y prompts
 docs(stage4): documentar ejecucion y decisiones arquitectonicas
 ```
+
+## Actualización Etapa 4 v1.1.0
+
+Se reforzó el prompt maestro con separación explícita entre reglas obligatorias y reglas interpretativas por IA. El agente queda restringido a inferencia batch, sin comportamiento conversacional, y debe emitir exclusivamente JSON validado.
+
+### Componentes implementados
+
+- `src/midas/stage4/prompts.py`: prompt maestro, prompt de clasificación y prompt de reparación de JSON.
+- `src/midas/stage4/rules.py`: reglas determinísticas obligatorias para datos insuficientes, variación significativa, reclamos, PNO, error de lectura, constante e instalación/cambio.
+- `src/midas/stage4/agent_orchestrator.py`: orquestación de contexto, reglas, LLM, validación, retry de JSON y guardrails.
+- `src/midas/stage4/evaluation.py`: métricas batch, accuracy contra analista y discrepancias.
+- `src/midas/main_stage4_evaluation.py`: runner de evaluación contra tabla de decisión del analista.
+
+### Few-shots funcionales incluidos
+
+Los few-shots quedaron dentro del prompt de clasificación como patrones guía para:
+
+1. Variación con cambio de medidor o instalación.
+2. Variación significativa sin soporte.
+3. Reclamo/PQR relacionado.
+4. Constante mal configurada.
+5. Datos históricos insuficientes.
+6. Posible error de lectura.
+
+Cuando EPM entregue el documento detallado del analista Luis Eduardo con ejemplos reales, estos few-shots deben reemplazarse o complementarse con casos reales anonimizados.
+
+### Evaluación y refinamiento
+
+El ciclo recomendado es:
+
+1. Ejecutar `rules-only` sobre 40.000 registros para validar cobertura, tiempos y calidad del contrato de datos.
+2. Ejecutar `dry-run` con 5 a 20 registros para validar LLM y JSON.
+3. Ejecutar `persistente` con 100 a 300 órdenes.
+4. Comparar contra decisión del analista usando `main_stage4_evaluation.py`.
+5. Revisar discrepancias y ajustar prompt/reglas.
+6. Versionar prompt como `stage4-vX.Y.Z`.

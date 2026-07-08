@@ -44,3 +44,5 @@ MIDAS es un flujo de datos y decision asistida por LLM que:
 - La documentacion se basa en el codigo actual, no en una arquitectura idealizada.
 - Se prioriza exactitud operativa sobre limpieza conceptual.
 - Cuando el repositorio muestra deuda tecnica o drift entre implementacion y pruebas, se documenta de forma explicita en vez de ocultarse.
+
+- [11. Etapa 5 - Job del proceso del agente](11_ETAPA5_JOB_AGENTE.md)

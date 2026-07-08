@@ -496,3 +496,61 @@ resources:
       tags:
         Area: Facturación
         Tipo: Stage4-Agent
+
+    # JOB 5: ETAPA 5 - JOB PRODUCTIVO DEL PROCESO DEL AGENTE
+    midas_stage5_agent_job_daily:
+      name: midas_stage5_agent_job_daily
+      permissions:
+        - level: CAN_MANAGE
+          service_principal_name: ${var.pipeline_sp}
+      email_notifications:
+        on_success:
+          - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
+        on_failure:
+          - jonatan.londono@epm.com.co
+          - mpalomin@contratista.epm.co
+          - jcordori@contratista.epm.co
+      job_clusters:
+        - *job_cluster
+      tasks:
+        - task_key: ejecutar_job_productivo_agente
+          job_cluster_key: midas_cluster
+          spark_python_task:
+            python_file: ./src/midas/main_stage5_job.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog_name}"
+              - "--schema"
+              - "${var.schema_name}"
+              - "--ambiente"
+              - "${bundle.target}"
+              - "--fecha_proceso"
+              - "{{job.start_time.iso_date}}"
+              - "--limite_ordenes"
+              - "300"
+              - "--modo_ejecucion"
+              - "persistente"
+              - "--model_endpoint"
+              - "${var.endpoint_name}"
+              - "--prompt_version"
+              - "stage4-v1.1.0"
+              - "--model_version"
+              - "${var.endpoint_name}"
+              - "--umbral_variacion"
+              - "0.30"
+              - "--max_retries"
+              - "3"
+              - "--crear_sql_functions"
+              - "true"
+      schedule:
+        quartz_cron_expression: "0 0 9 * * ?"
+        timezone_id: "America/Bogota"
+        pause_status: PAUSED
+      tags:
+        Area: Facturación
+        Tipo: Stage5-Job
+        Sistema: MIDAS
+      queue:
+        enabled: true
