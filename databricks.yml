@@ -1,0 +1,465 @@
+# =============================================================================
+# midas_data_platform — Bundle de INGENIERÍA DE DATOS del proyecto MIDAS (EPM)
+# =============================================================================
+# Responsabilidad EXCLUSIVA de este bundle: la cadena de datos
+#   Oracle → Parquet (Volume UC) → Bronze → Silver (schema `facturacion`).
+#
+# El AGENTE (serving, deploy MLOps, inferencia batch) vive en el bundle
+# `midas_agent`. Este repo ya NO contiene nada del agente.
+#
+# Contrato entre bundles:
+#   - Este bundle PRODUCE las tablas Silver que el agente CONSUME.
+#   - La cadena corre a las 07:00 America/Bogota (extracción ~30 min +
+#     bronze ~5 min + silver ~5 min → termina antes de las 08:00).
+#   - La inferencia del agente (bundle midas_agent) debe correr DESPUÉS de
+#     ~08:00, o validar `midas_log_cargas` (estado EXITOSO de la corrida del
+#     día) antes de arrancar. No hay acoplamiento directo de jobs entre bundles.
+#
+# Conexión a Oracle: JDBC ojdbc11 vía JayDeBeApi + JPype1 (driver-side).
+# Ver README.md ("Conexión a Oracle") y src/midas/db/database.py.
+# =============================================================================
+
+bundle:
+  name: midas_data_platform
+
+# Nada de artifacts: ningún job consume un wheel; los paquetes del repo se
+# resuelven vía sys.path dentro de cada runner (patrón BUG-001).
+
+sync:
+  exclude:
+    - "**/__pycache__/**"
+    - "**/*.pyc"
+    - "dist/**"
+    - ".databricks/**"
+    - "pipeline/**"
+    - "tests/**"
+
+# -----------------------------------------------------------------------------
+# VARIABLES GLOBALES (declaración obligatoria — I7: declaración + valor por
+# target + paso explícito como ${var.x} donde se usa; si falta una pieza llega
+# vacía y NO falla el deploy, falla en runtime).
+# -----------------------------------------------------------------------------
+variables:
+  catalog_destino:
+    description: Catálogo Unity Catalog destino (Bronze/Silver y tablas de control).
+  schema_destino:
+    description: Schema destino dentro del catálogo (facturacion).
+  source_catalog:
+    description: Catálogo del Volume UC donde se escriben/leen los Parquet fuente.
+  source_schema:
+    description: Schema del Volume UC fuente.
+  source_volume:
+    description: Nombre del Volume donde se materializan los Parquet.
+  source_base_path:
+    description: Carpeta base dentro del Volume para los Parquet de esta cadena.
+  oracle_host:
+    description: Host del listener Oracle.
+  oracle_port:
+    description: Puerto del listener Oracle.
+  oracle_service:
+    description: Service name Oracle.
+  oracle_user:
+    description: Usuario Oracle (va explícito, NO está en el secret scope — I9).
+  oracle_secret_scope:
+    description: Databricks Secret Scope que contiene la contraseña de Oracle.
+  oracle_password_key:
+    description: Clave dentro del Secret Scope con la contraseña de Oracle.
+  oracle_jdbc_jar_path:
+    description: >-
+      Ruta /Volumes/... del jar ojdbc11 (debe coincidir carácter por carácter
+      con la ubicación real en el Volume — I6). El SP necesita READ VOLUME.
+  pause_schedule:
+    description: Estado del schedule del job (PAUSED / UNPAUSED).
+  service_principal:
+    description: Application ID del Service Principal que ejecuta el job.
+  cluster_id:
+    description: ID del cluster compartido existente (solo dllo; el SP no puede crear clusters).
+    default: ""
+  spark_version:
+    description: DBR de los job clusters efímeros (uat/pdn). 16.4 = JDK 17, empatado con ojdbc11 (I4).
+    default: ""
+  node_type_id:
+    description: Tipo de nodo de los job clusters efímeros (uat/pdn).
+    default: ""
+  num_workers:
+    description: Número de workers de los job clusters efímeros (uat/pdn).
+    default: "0"
+
+targets:
+  # ------------------------------- DESARROLLO (dllo) -------------------------
+  dllo:
+    mode: production
+    default: true
+    workspace:
+      host: https://adb-1161217326944529.9.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    # Versión final por pipeline: el job corre como el Service Principal (SP→SP).
+    # Workaround conocido para deploy LOCAL como mpalomin@contratista.epm.co:
+    # si el deploy da 403 PERMISSION_DENIED, COMENTA el service_principal_name
+    # de abajo y DESCOMENTA el user_name. REVERTIR antes de merge (por pipeline
+    # el deploy es SP→SP y este workaround no hace falta).
+    run_as:
+      service_principal_name: ${var.service_principal}
+      # user_name: mpalomin@contratista.epm.co
+    variables:
+      catalog_destino: epm_datalabs_catalog_dllo
+      schema_destino: facturacion
+      source_catalog: epm_datalake_vol_np
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      oracle_host: epm-to34.corp.epm.com.co
+      oracle_port: "1521"
+      oracle_service: SFUAT
+      oracle_user: SQL_EPMBOTPD05
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
+      oracle_password_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      oracle_jdbc_jar_path: /Volumes/epm_datalake_vol_np/facturacion_vol/facturacion_bronze_vol/_oracle_client/ojdbc11-23.26.2.0.0.jar
+      pause_schedule: PAUSED
+      service_principal: 2080d313-3074-4adf-8265-916ef7645dc2
+      cluster_id: 0722-211855-e1a090ph
+    resources:
+      jobs:
+        midas_bronze_silver:
+          name: midas_bronze_silver_${bundle.target}
+          permissions:
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+            - level: CAN_MANAGE_RUN
+              user_name: mpalomin@contratista.epm.co
+          schedule:
+            quartz_cron_expression: "0 0 7 * * ?"
+            timezone_id: America/Bogota
+            pause_status: ${var.pause_schedule}
+          email_notifications:
+            on_success:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+            on_failure:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+          tags:
+            Area: Facturación
+            Gerencia: Gerencia experiencia usuario cliente
+          queue:
+            enabled: true
+          # dllo corre sobre el cluster compartido (existing_cluster_id): el SP
+          # no puede crear clusters. NO se declara `libraries` aquí: instalar
+          # requiere Manage sobre el cluster; el admin preinstala JayDeBeApi y
+          # JPype1 en el cluster compartido (Compute → cluster → Libraries).
+          tasks:
+            - task_key: extraer_datos_oracle
+              existing_cluster_id: ${var.cluster_id}
+              spark_python_task:
+                python_file: ./src/midas/main_data_fetcher.py
+                parameters:
+                  - "--db_user"
+                  - "${var.oracle_user}"
+                  - "--db_dsn"
+                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  - "--secret_scope"
+                  - "${var.oracle_secret_scope}"
+                  - "--db_password_secret_key"
+                  - "${var.oracle_password_key}"
+                  - "--oracle_jdbc_jar_path"
+                  - "${var.oracle_jdbc_jar_path}"
+                  - "--output_path"
+                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: actualizar_ordenes_calidad
+              depends_on:
+                - task_key: extraer_datos_oracle
+              existing_cluster_id: ${var.cluster_id}
+              spark_python_task:
+                python_file: ./src/midas/main_ingestion.py
+                parameters:
+                  - "--source_catalog"
+                  - "${var.source_catalog}"
+                  - "--source_schema"
+                  - "${var.source_schema}"
+                  - "--source_volume"
+                  - "${var.source_volume}"
+                  - "--source_base_path"
+                  - "${var.source_base_path}"
+                  - "--destination_catalog"
+                  - "${var.catalog_destino}"
+                  - "--destination_schema"
+                  - "${var.schema_destino}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: bronze_to_silver
+              depends_on:
+                - task_key: actualizar_ordenes_calidad
+              existing_cluster_id: ${var.cluster_id}
+              spark_python_task:
+                python_file: ./src/midas/main_transform.py
+                parameters:
+                  - "--catalog"
+                  - "${var.catalog_destino}"
+                  - "--schema"
+                  - "${var.schema_destino}"
+
+  # ------------------------------- PRUEBAS (uat) ----------------------------
+  uat:
+    mode: production
+    workspace:
+      host: https://adb-6159907084216583.3.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.service_principal}
+    variables:
+      catalog_destino: epm_datalake_catalog_np
+      schema_destino: facturacion
+      source_catalog: epm_datalake_vol_np
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      oracle_host: epm-to34.corp.epm.com.co
+      oracle_port: "1521"
+      oracle_service: SFUAT
+      oracle_user: SQL_EPMBOTPD05
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
+      oracle_password_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      oracle_jdbc_jar_path: /Volumes/epm_datalake_vol_np/facturacion_vol/facturacion_bronze_vol/_oracle_client/ojdbc11-23.26.2.0.0.jar
+      pause_schedule: UNPAUSED
+      service_principal: c0b3fdca-baec-4bab-9f08-c6e222d921ae
+      spark_version: 16.4.x-scala2.12
+      node_type_id: Standard_DS4_v2
+      num_workers: "2"
+    resources:
+      jobs:
+        midas_bronze_silver:
+          name: midas_bronze_silver_${bundle.target}
+          permissions:
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+          schedule:
+            quartz_cron_expression: "0 0 7 * * ?"
+            timezone_id: America/Bogota
+            pause_status: ${var.pause_schedule}
+          email_notifications:
+            on_success:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+            on_failure:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+          tags:
+            Area: Facturación
+            Gerencia: Gerencia experiencia usuario cliente
+          queue:
+            enabled: true
+          job_clusters:
+            - job_cluster_key: midas_cluster
+              new_cluster:
+                spark_version: ${var.spark_version}       # 16.4 = JDK 17, empatado con ojdbc11 (I4)
+                node_type_id: ${var.node_type_id}
+                num_workers: ${var.num_workers}
+                data_security_mode: SINGLE_USER            # requerido para JPype/JVM en proceso (I5)
+                single_user_name: ${var.service_principal}
+          tasks:
+            - task_key: extraer_datos_oracle
+              job_cluster_key: midas_cluster
+              # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
+              libraries:
+                - pypi:
+                    package: JayDeBeApi
+                - pypi:
+                    package: JPype1
+              spark_python_task:
+                python_file: ./src/midas/main_data_fetcher.py
+                parameters:
+                  - "--db_user"
+                  - "${var.oracle_user}"
+                  - "--db_dsn"
+                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  - "--secret_scope"
+                  - "${var.oracle_secret_scope}"
+                  - "--db_password_secret_key"
+                  - "${var.oracle_password_key}"
+                  - "--oracle_jdbc_jar_path"
+                  - "${var.oracle_jdbc_jar_path}"
+                  - "--output_path"
+                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: actualizar_ordenes_calidad
+              depends_on:
+                - task_key: extraer_datos_oracle
+              job_cluster_key: midas_cluster
+              spark_python_task:
+                python_file: ./src/midas/main_ingestion.py
+                parameters:
+                  - "--source_catalog"
+                  - "${var.source_catalog}"
+                  - "--source_schema"
+                  - "${var.source_schema}"
+                  - "--source_volume"
+                  - "${var.source_volume}"
+                  - "--source_base_path"
+                  - "${var.source_base_path}"
+                  - "--destination_catalog"
+                  - "${var.catalog_destino}"
+                  - "--destination_schema"
+                  - "${var.schema_destino}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: bronze_to_silver
+              depends_on:
+                - task_key: actualizar_ordenes_calidad
+              job_cluster_key: midas_cluster
+              spark_python_task:
+                python_file: ./src/midas/main_transform.py
+                parameters:
+                  - "--catalog"
+                  - "${var.catalog_destino}"
+                  - "--schema"
+                  - "${var.schema_destino}"
+
+  # ------------------------------ PRODUCCIÓN (pdn) --------------------------
+  pdn:
+    mode: production
+    workspace:
+      host: https://adb-5768199714870840.0.azuredatabricks.net
+      root_path: /Shared/bundles/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.service_principal}
+    variables:
+      catalog_destino: epm_datalake_catalog_prod
+      schema_destino: facturacion
+      source_catalog: epm_datalake_vol_prod
+      source_schema: facturacion_vol
+      source_volume: facturacion_bronze_vol
+      source_base_path: midas_agent
+      oracle_host: epm-po34.corp.epm.com.co
+      oracle_port: "1522"
+      oracle_service: SFPDN
+      oracle_user: SQL_EPMBOTPD05
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-PROD
+      oracle_password_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      oracle_jdbc_jar_path: /Volumes/epm_datalake_vol_prod/facturacion_vol/facturacion_bronze_vol/_oracle_client/ojdbc11-23.26.2.0.0.jar
+      pause_schedule: UNPAUSED
+      service_principal: 1db15634-31b7-4f92-a976-fc8920216152
+      spark_version: 16.4.x-scala2.12
+      node_type_id: Standard_DS4_v2
+      num_workers: "2"
+    resources:
+      jobs:
+        midas_bronze_silver:
+          name: midas_bronze_silver_${bundle.target}
+          permissions:
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+          schedule:
+            quartz_cron_expression: "0 0 7 * * ?"
+            timezone_id: America/Bogota
+            pause_status: ${var.pause_schedule}
+          email_notifications:
+            on_success:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+            on_failure:
+              - jonatan.londono@epm.com.co
+              - mpalomin@contratista.epm.co
+              - jcordori@contratista.epm.co
+          tags:
+            Area: Facturación
+            Gerencia: Gerencia experiencia usuario cliente
+          queue:
+            enabled: true
+          job_clusters:
+            - job_cluster_key: midas_cluster
+              new_cluster:
+                spark_version: ${var.spark_version}       # 16.4 = JDK 17, empatado con ojdbc11 (I4)
+                node_type_id: ${var.node_type_id}
+                num_workers: ${var.num_workers}
+                data_security_mode: SINGLE_USER            # requerido para JPype/JVM en proceso (I5)
+                single_user_name: ${var.service_principal}
+          tasks:
+            - task_key: extraer_datos_oracle
+              job_cluster_key: midas_cluster
+              # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
+              libraries:
+                - pypi:
+                    package: JayDeBeApi
+                - pypi:
+                    package: JPype1
+              spark_python_task:
+                python_file: ./src/midas/main_data_fetcher.py
+                parameters:
+                  - "--db_user"
+                  - "${var.oracle_user}"
+                  - "--db_dsn"
+                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  - "--secret_scope"
+                  - "${var.oracle_secret_scope}"
+                  - "--db_password_secret_key"
+                  - "${var.oracle_password_key}"
+                  - "--oracle_jdbc_jar_path"
+                  - "${var.oracle_jdbc_jar_path}"
+                  - "--output_path"
+                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: actualizar_ordenes_calidad
+              depends_on:
+                - task_key: extraer_datos_oracle
+              job_cluster_key: midas_cluster
+              spark_python_task:
+                python_file: ./src/midas/main_ingestion.py
+                parameters:
+                  - "--source_catalog"
+                  - "${var.source_catalog}"
+                  - "--source_schema"
+                  - "${var.source_schema}"
+                  - "--source_volume"
+                  - "${var.source_volume}"
+                  - "--source_base_path"
+                  - "${var.source_base_path}"
+                  - "--destination_catalog"
+                  - "${var.catalog_destino}"
+                  - "--destination_schema"
+                  - "${var.schema_destino}"
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_bronze"
+            - task_key: bronze_to_silver
+              depends_on:
+                - task_key: actualizar_ordenes_calidad
+              job_cluster_key: midas_cluster
+              spark_python_task:
+                python_file: ./src/midas/main_transform.py
+                parameters:
+                  - "--catalog"
+                  - "${var.catalog_destino}"
+                  - "--schema"
+                  - "${var.schema_destino}"

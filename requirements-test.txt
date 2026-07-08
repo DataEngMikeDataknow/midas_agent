@@ -1,0 +1,8 @@
+pytest==8.0.0
+pytest-cov==4.1.0
+mock==5.1.0
+# Los tests de tipos (test_jdbc_database) usan pandas + numpy.
+# NO se agregan JayDeBeApi/JPype1: los tests los mockean e instalar JPype en el
+# agente de CI es frágil.
+pandas
+numpy

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas_data_platform"
+version = "0.1.0"
+description = "Bundle de ingeniería de datos MIDAS (Oracle → Bronze → Silver) del proyecto EPM."
+# El agente de build es Ubuntu 20.04 con Python 3.8. Si se introducen genéricos
+# PEP 585 usar `from __future__ import annotations`.
+requires-python = ">=3.8"
+dependencies = [
+    "pandas",
+    "pyarrow",
+    "JayDeBeApi",
+    "JPype1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

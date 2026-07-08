@@ -1,0 +1,275 @@
+# =============================================================================
+# PIPELINE DE DESPLIEGUE — midas_data_platform (Databricks Asset Bundle)
+# =============================================================================
+# Bundle EXCLUSIVO de ingeniería de datos (Oracle → Bronze → Silver).
+# El agente vive en el repo/pipeline de `midas_agent`; aquí no se despliega nada
+# del agente.
+#
+# Mapeo rama → target (los nombres de target coinciden CARÁCTER POR CARÁCTER con
+# databricks.yml):
+#     desarrollo → dllo
+#     pruebas    → uat
+#     produccion → pdn
+#
+# También puede lanzarse manualmente desde cualquier rama eligiendo el parámetro
+# `environment` (dllo | uat | pdn), útil para validar cambios de pipeline sin PR.
+#
+# CREDENCIALES (variable group `databricks-MIDAS`):
+#   Idealmente debería existir un variable group propio `databricks-DATA-PLATFORM`;
+#   mientras tanto `databricks-MIDAS` contiene las MISMAS variables y se reutiliza.
+#   Se mapean a las env estándar del Databricks CLI:
+#     DATABRICKS_HOST            ← {DEV,UAT,PROD}_DATABRICKS_HOST
+#     DATABRICKS_CLIENT_ID       ← {DEV,UAT,PROD}_AZURE_SP_APPLICATION_ID
+#     DATABRICKS_CLIENT_SECRET   ← {DEV,UAT,PROD}_AZURE_SP_CLIENT_SECRET
+#     DATABRICKS_AZURE_TENANT_ID ← AZURE_TENANT_ID
+#
+# Terraform: se instala 1.9.8 explícito en /tmp/terraform_bin/terraform y se
+# apunta DATABRICKS_TF_EXEC_PATH allí. El agent pool falla descargando Terraform
+# durante `bundle deploy` (fallo documentado); por eso se preinstala.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - desarrollo
+      - pruebas
+      - produccion
+
+parameters:
+  - name: environment
+    displayName: "Ambiente destino (solo para ejecución manual)"
+    type: string
+    default: dllo
+    values:
+      - dllo
+      - uat
+      - pdn
+
+variables:
+  - group: databricks-MIDAS
+
+stages:
+  # ==========================================================================
+  # DLLO ← rama desarrollo (o manual con environment=dllo)
+  # ==========================================================================
+  - stage: Deploy_DLLO
+    displayName: Deploy bundle to DLLO
+    dependsOn: []
+    condition: |
+      or(
+        and(
+          eq(variables['Build.SourceBranchName'], 'desarrollo'),
+          eq(variables['Build.Reason'], 'IndividualCI')
+        ),
+        and(
+          eq(variables['Build.Reason'], 'Manual'),
+          eq('${{ parameters.environment }}', 'dllo')
+        )
+      )
+    jobs:
+      - job: Deploy
+        displayName: Deploy bundle (dllo)
+        pool:
+          name: Interno-Ubuntu20.04-VMSS
+        steps:
+          - checkout: self
+            clean: true
+            persistCredentials: true
+
+          - script: |
+              set -euo pipefail
+              if ! command -v databricks >/dev/null 2>&1; then
+                echo "Databricks CLI no está instalado. Instalando..."
+                curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.221.0/install.sh | sh
+              else
+                echo "Databricks CLI ya está instalado."
+              fi
+              databricks -v
+            displayName: 'Install Databricks CLI'
+
+          - script: |
+              set -euo pipefail
+              TF_VERSION="1.9.8"
+              TF_BIN="/tmp/terraform_bin/terraform"
+              if [ ! -f "${TF_BIN}" ]; then
+                mkdir -p /tmp/terraform_bin
+                curl -4 -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+                unzip -o /tmp/terraform.zip -d /tmp/terraform_bin
+                chmod +x "${TF_BIN}"
+              fi
+              "${TF_BIN}" version
+            displayName: 'Install Terraform 1.9.8'
+
+          - script: |
+              set -euo pipefail
+              databricks bundle validate -t dllo
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Validate bundle (dllo)'
+            env:
+              DATABRICKS_HOST: $(DEV_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(DEV_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(DEV_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
+
+          - script: |
+              set -euo pipefail
+              databricks bundle deploy -t dllo
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Deploy bundle (dllo)'
+            env:
+              DATABRICKS_HOST: $(DEV_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(DEV_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(DEV_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
+
+  # ==========================================================================
+  # UAT ← rama pruebas (o manual con environment=uat)
+  # ==========================================================================
+  - stage: Deploy_UAT
+    displayName: Deploy bundle to UAT
+    dependsOn: []
+    condition: |
+      or(
+        and(
+          eq(variables['Build.SourceBranchName'], 'pruebas'),
+          eq(variables['Build.Reason'], 'IndividualCI')
+        ),
+        and(
+          eq(variables['Build.Reason'], 'Manual'),
+          eq('${{ parameters.environment }}', 'uat')
+        )
+      )
+    jobs:
+      - job: Deploy
+        displayName: Deploy bundle (uat)
+        pool:
+          name: Interno-Ubuntu20.04-VMSS
+        steps:
+          - checkout: self
+            clean: true
+            persistCredentials: true
+
+          - script: |
+              set -euo pipefail
+              if ! command -v databricks >/dev/null 2>&1; then
+                echo "Databricks CLI no está instalado. Instalando..."
+                curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.221.0/install.sh | sh
+              else
+                echo "Databricks CLI ya está instalado."
+              fi
+              databricks -v
+            displayName: 'Install Databricks CLI'
+
+          - script: |
+              set -euo pipefail
+              TF_VERSION="1.9.8"
+              TF_BIN="/tmp/terraform_bin/terraform"
+              if [ ! -f "${TF_BIN}" ]; then
+                mkdir -p /tmp/terraform_bin
+                curl -4 -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+                unzip -o /tmp/terraform.zip -d /tmp/terraform_bin
+                chmod +x "${TF_BIN}"
+              fi
+              "${TF_BIN}" version
+            displayName: 'Install Terraform 1.9.8'
+
+          - script: |
+              set -euo pipefail
+              databricks bundle validate -t uat
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Validate bundle (uat)'
+            env:
+              DATABRICKS_HOST: $(UAT_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(UAT_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(UAT_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
+
+          - script: |
+              set -euo pipefail
+              databricks bundle deploy -t uat
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Deploy bundle (uat)'
+            env:
+              DATABRICKS_HOST: $(UAT_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(UAT_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(UAT_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
+
+  # ==========================================================================
+  # PDN ← rama produccion (o manual con environment=pdn)
+  # ==========================================================================
+  - stage: Deploy_PDN
+    displayName: Deploy bundle to PDN
+    dependsOn: []
+    condition: |
+      or(
+        and(
+          eq(variables['Build.SourceBranchName'], 'produccion'),
+          eq(variables['Build.Reason'], 'IndividualCI')
+        ),
+        and(
+          eq(variables['Build.Reason'], 'Manual'),
+          eq('${{ parameters.environment }}', 'pdn')
+        )
+      )
+    jobs:
+      - job: Deploy
+        displayName: Deploy bundle (pdn)
+        pool:
+          name: Interno-Ubuntu20.04-VMSS
+        steps:
+          - checkout: self
+            clean: true
+            persistCredentials: true
+
+          - script: |
+              set -euo pipefail
+              if ! command -v databricks >/dev/null 2>&1; then
+                echo "Databricks CLI no está instalado. Instalando..."
+                curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.221.0/install.sh | sh
+              else
+                echo "Databricks CLI ya está instalado."
+              fi
+              databricks -v
+            displayName: 'Install Databricks CLI'
+
+          - script: |
+              set -euo pipefail
+              TF_VERSION="1.9.8"
+              TF_BIN="/tmp/terraform_bin/terraform"
+              if [ ! -f "${TF_BIN}" ]; then
+                mkdir -p /tmp/terraform_bin
+                curl -4 -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+                unzip -o /tmp/terraform.zip -d /tmp/terraform_bin
+                chmod +x "${TF_BIN}"
+              fi
+              "${TF_BIN}" version
+            displayName: 'Install Terraform 1.9.8'
+
+          - script: |
+              set -euo pipefail
+              databricks bundle validate -t pdn
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Validate bundle (pdn)'
+            env:
+              DATABRICKS_HOST: $(PROD_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(PROD_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(PROD_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
+
+          - script: |
+              set -euo pipefail
+              databricks bundle deploy -t pdn
+            workingDirectory: $(Build.SourcesDirectory)
+            displayName: 'Deploy bundle (pdn)'
+            env:
+              DATABRICKS_HOST: $(PROD_DATABRICKS_HOST)
+              DATABRICKS_CLIENT_ID: $(PROD_AZURE_SP_APPLICATION_ID)
+              DATABRICKS_CLIENT_SECRET: $(PROD_AZURE_SP_CLIENT_SECRET)
+              DATABRICKS_AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              DATABRICKS_TF_EXEC_PATH: /tmp/terraform_bin/terraform
