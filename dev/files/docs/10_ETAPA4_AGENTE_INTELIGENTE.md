@@ -1,200 +1,188 @@
-# Etapa 4 — Construcción del nuevo agente inteligente MIDAS
+# Etapa 4 - Construcción del nuevo agente inteligente MIDAS
 
-## 1. Análisis de la arquitectura actual
+## Alcance implementado
 
-El repositorio ya sigue una arquitectura Databricks-oriented con estos bloques:
+Esta refactorización implementa la Etapa 4 para la casuística prioritaria:
 
-- `src/midas/db`: extracción Oracle mediante queries parametrizadas y escritura Parquet.
-- `src/midas/framework`: control de cargas y logging de la cadena Bronze.
-- `src/midas/ingestion.py`: carga Parquet hacia Delta/Unity Catalog.
-- `src/midas/transformations.py`: materialización Silver.
-- `src/midas/agent`: prompts y SQL Functions usadas como tools del agente legacy.
-- `src/midas/main_*`: runners ejecutables desde `spark_python_task` en Databricks Jobs.
-- `databricks.yml`: Databricks Asset Bundle con jobs de carga, despliegue e inferencia.
+`993 - VARIACION SIGNIFICATIVA CONTRA EL MES ANTERIOR`
 
-La Etapa 4 se implementa respetando ese patrón: paquete Python dentro de `src/midas`, runners `main_stage4_*`, SQL functions en Unity Catalog, tablas Delta Gold y documentación en `docs`/`sql`. No se crea una aplicación aislada ni una estructura paralela fuera del repo.
+El agente quedó diseñado como componente batch en Databricks. No es conversacional. Recibe un contrato de entrada JSON, aplica reglas determinísticas, opcionalmente llama un endpoint LLM/Mosaic AI y persiste resultados Gold, logs y métricas.
 
-## 2. Estructura agregada
+## Mapa real de datos usado
 
-```text
-src/midas/stage4/
-  constants.py          # query_keys, tablas, categorías, decisiones
-  config.py             # parámetros de ejecución dev/qa/prod
-  models.py             # entidades de dominio flexibles
-  data_access.py        # Data Access Layer sobre Unity Catalog
-  normalization.py      # normalización Bronze -> dominio
-  rules.py              # reglas determinísticas y guardrails
-  schemas.py            # JSON schema + DDL tablas Gold/logs/métricas
-  validator.py          # validación estricta de salida
-  prompts.py            # system prompt y prompt de clasificación
-  llm.py                # cliente Databricks Serving
-  agent_orchestrator.py # orquestación de inferencia
-  persistence.py        # persistencia Delta
-  evaluation.py         # métricas batch y comparación analista
-  tools_sql.py          # SQL Functions controladas
+El análisis funcional/técnico validó que la fuente principal de entrada es:
 
-src/midas/main_stage4_tools.py
-src/midas/main_stage4_agent.py
-agent/agent_stage4.py
-sql/stage4_tables.sql
-sql/stage4_sql_functions.sql
-tests/test_stage4_*.py
-```
+- `facturacion.midas_ordenes_calidad_pendientes_silver`
 
-## 3. Flujo operativo
+La llave central del modelo es:
 
-1. El job lee órdenes desde `midas_ordenes_calidad_pendientes_bronze`.
-2. Para cada orden obtiene producto, lecturas, consumos, crítica previa, comentarios, cuentas de cobro y detalle de cargos.
-3. Normaliza el contexto a entidades de dominio.
-4. Ejecuta reglas determinísticas obligatorias:
-   - datos mínimos;
-   - variación contra mes anterior;
-   - señales de lectura, PNO, constante, reclamo, obra/cambio;
-   - guardrails de revisión humana.
-5. Si hay endpoint LLM y no es hard stop, llama al agente con prompt cerrado y schema obligatorio.
-6. Valida el JSON. Si falla, reintenta una reparación una vez.
-7. Si vuelve a fallar, genera fallback auditable con `REQUIERE_REVISION_HUMANA`.
-8. Persiste resultados en Gold, logs funcionales/técnicos y métricas de inferencia.
+- `servicio_suscrito`
 
-## 4. Fuentes consumidas
+La fuente principal para explicar la casuística 993 es:
 
-Todas las lecturas se hacen desde el catálogo/esquema parametrizado. Para DLLO:
+- `facturacion.midas_datos_lecturas_producto_bronze`
 
-```text
-epm_datalabs_catalog_dllo.facturacion.midas_ordenes_calidad_pendientes_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_basicos_producto_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_lecturas_producto_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_consumos_producto_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_ordenes_previa_critica_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_comentarios_ordenes_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_cuentas_cobro_bronze
-epm_datalabs_catalog_dllo.facturacion.midas_datos_detalle_cargos_bronze
-```
+Fuentes complementarias:
 
-Nota: el repositorio legacy tiene una referencia con typo `midas_datos_cometarios_ordenes_bronze`; la nueva capa usa el nombre correcto y mantiene fallback en `data_access.py` para lecturas programáticas.
+- `facturacion.midas_datos_detalle_solicitudes_silver`
+- `facturacion.midas_historial_critica_silver`
+- `facturacion.midas_datos_consumos_producto_bronze` como evidencia secundaria
 
-## 5. Ejecución
+No se usa `resultado_ia` como salida final porque no contiene el contrato trazable requerido para una inferencia productiva.
 
-### Crear SQL Functions controladas
+## Tablas creadas por la Etapa 4
 
-```bash
-databricks bundle run midas_stage4_agent_quality_orders -t dev
-```
+### Entrada del agente
 
-O manualmente:
+- `midas_contexto_agente_993_v0`: contexto estructurado por orden.
+- `midas_agent_input_993_v0`: JSON limpio de entrada para el agente.
 
-```bash
-python src/midas/main_stage4_tools.py \
-  --catalog epm_datalabs_catalog_dllo \
-  --schema facturacion
-```
+### Salidas
 
-### Dry-run de 100 órdenes
+- `midas_resultado_agente_ordenes_calidad_gold`: resultado final del agente.
+- `midas_logs_agente_ordenes_calidad`: logs técnicos y funcionales por orden.
+- `midas_metricas_agente_ordenes_calidad`: métricas de ejecución.
+- `midas_evaluacion_agente_ordenes_calidad`: comparación contra analista cuando exista tabla de referencia.
+
+## Contrato de entrada del agente
+
+El JSON de entrada se divide en:
+
+- `orden`: datos no personales de la orden.
+- `consumo_principal`: consumo facturado actual/anterior, promedio 6m, variaciones y límites.
+- `lectura`: lectura anterior/actual, diferencia, constante, PNO y observaciones.
+- `calidad_dato`: flags de consumo extremo, inconsistencia y revisión obligatoria.
+- `antecedentes`: solicitudes y críticas.
+- `evidencia_adicional`: consumos por tipo para no perder anomalías secundarias.
+
+Por gobierno de datos no se envían al LLM:
+
+- `nombre_cliente`
+- `identificacion`
+- `direccion`
+- `pagina`
+
+## Reglas obligatorias
+
+Antes del LLM se aplican reglas duras:
+
+| Regla | Resultado |
+|---|---|
+| `requiere_revision_por_calidad_dato = true` | Revisión humana |
+| `flag_consumo_extremo = true` | Revisión humana |
+| `existe_consumo_extremo_en_algun_tipo = true` | Revisión humana |
+| `flag_lectura_inconsistente = true` | Posible error de lectura / revisión |
+| `tiene_pno = true` | Posible PNO |
+| Solicitud con reclamo/PQR/queja/recurso | Escalar |
+| Consumo anterior cero y sin promedio útil | Datos insuficientes |
+| `flag_fuera_limites = true` | Señal fuerte de variación, revisar |
+
+## Prompt maestro
+
+El prompt maestro está en:
+
+`src/midas/stage4/prompts.py`
+
+Incluye:
+
+- rol del agente;
+- contrato real de entrada;
+- reglas obligatorias;
+- reglas interpretativas;
+- categorías permitidas;
+- decisiones permitidas;
+- schema JSON final;
+- few-shots funcionales iniciales para validar con documento de Luis.
+
+## Categorías de clasificación
+
+- `NORMAL`
+- `VARIACION_SIGNIFICATIVA_JUSTIFICADA`
+- `VARIACION_SIGNIFICATIVA_NO_JUSTIFICADA`
+- `CONSTANTE_MAL_CONFIGURADA`
+- `POSIBLE_ERROR_LECTURA`
+- `POSIBLE_PNO`
+- `ESTACIONALIDAD`
+- `OBRA_NUEVA_O_CAMBIO_INSTALACION`
+- `RECLAMO_RELACIONADO`
+- `DATOS_INSUFICIENTES`
+- `REQUIERE_REVISION_HUMANA`
+
+## Ejecución recomendada
+
+### 1. Crear / refrescar contexto y probar reglas
 
 ```bash
 python src/midas/main_stage4_agent.py \
   --catalog epm_datalabs_catalog_dllo \
   --schema facturacion \
   --ambiente dev \
-  --fecha_proceso 2026-06-23 \
-  --limite_ordenes 100 \
-  --modo_ejecucion dry-run \
-  --model_endpoint agente_ordenes_calidad_dev_v3
+  --fecha_proceso 2026-07-09 \
+  --limite_ordenes 37 \
+  --input_mode context \
+  --build_context true \
+  --modo_ejecucion rules-only
 ```
 
-### Persistente diario
+### 2. Persistir resultados rules-only
 
 ```bash
 python src/midas/main_stage4_agent.py \
   --catalog epm_datalabs_catalog_dllo \
   --schema facturacion \
   --ambiente dev \
-  --fecha_proceso 2026-06-23 \
-  --limite_ordenes 300 \
+  --fecha_proceso 2026-07-09 \
+  --limite_ordenes 37 \
+  --input_mode context \
+  --build_context true \
+  --modo_ejecucion persistente
+```
+
+### 3. Ejecutar con endpoint LLM
+
+```bash
+python src/midas/main_stage4_agent.py \
+  --catalog epm_datalabs_catalog_dllo \
+  --schema facturacion \
+  --ambiente dev \
+  --fecha_proceso 2026-07-09 \
+  --limite_ordenes 37 \
+  --input_mode context \
+  --build_context true \
   --modo_ejecucion persistente \
   --model_endpoint agente_ordenes_calidad_dev_v3
 ```
 
-### Prueba batch 40.000 registros
+### 4. Prueba de 40.000 registros
+
+La prueba de 40.000 registros debe iniciar en `rules-only` o con particionamiento/cuota aprobada del endpoint:
 
 ```bash
 python src/midas/main_stage4_agent.py \
   --catalog epm_datalabs_catalog_dllo \
   --schema facturacion \
   --ambiente dev \
-  --fecha_proceso 2026-06-23 \
+  --fecha_proceso 2026-07-09 \
   --limite_ordenes 40000 \
+  --input_mode context \
+  --build_context true \
   --modo_ejecucion rules-only
 ```
 
-Para 40.000 registros con LLM se debe usar endpoint con throughput aprobado y particionar por lotes operativos; no se recomienda ejecutarlo desde driver sin control de cuota.
+## Evaluación contra analista
 
-## 6. Decisiones arquitectónicas
+Cuando exista tabla de etiquetas del analista:
 
-- **Data Access cerrado por query_key**: impide SQL injection y evita que el modelo genere consultas arbitrarias.
-- **Dominio flexible**: las fuentes Bronze pueden cambiar capitalización o columnas; los modelos mantienen payload crudo y helpers tolerantes.
-- **Reglas antes del LLM**: lo determinístico se resuelve fuera del modelo. El LLM se usa para síntesis, clasificación fina y explicación.
-- **Schema estricto**: no se persiste salida inválida como si fuera decisión válida.
-- **Reintento único de reparación**: controla costo y evita loops.
-- **Fallback conservador**: ante error técnico o datos insuficientes, nunca se aprueba automáticamente.
-- **Logs y métricas separados**: los resultados Gold son consumibles por negocio; logs/métricas son para operación MLOps.
-
-## 7. Métricas mínimas
-
-- `porcentaje_json_valido`
-- `tasa_revision_humana`
-- `latencia_promedio_ms`
-- `latencia_p95_ms`
-- `errores_herramienta`
-- `accuracy` contra analista, si se entrega etiqueta histórica
-- reporte de discrepancias por `orden_id`
-
-## 8. Conventional commits sugeridos
-
-```text
-feat(stage4): agregar arquitectura modular del agente de ordenes de calidad
-feat(stage4): implementar data access layer sobre unity catalog
-feat(stage4): agregar reglas deterministicas para variacion significativa
-feat(stage4): agregar prompts y validacion estricta de json final
-feat(stage4): persistir resultados gold logs y metricas de inferencia
-feat(stage4): agregar sql functions controladas para tools del agente
-feat(stage4): agregar runner databricks para dry-run y modo persistente
-test(stage4): cubrir schema reglas data access y prompts
-docs(stage4): documentar ejecucion y decisiones arquitectonicas
+```bash
+python src/midas/main_stage4_evaluation.py \
+  --catalog epm_datalabs_catalog_dllo \
+  --schema facturacion \
+  --ambiente dev \
+  --fecha_proceso 2026-07-09 \
+  --run_id <RUN_ID> \
+  --analyst_table facturacion.resultado_ia \
+  --analyst_order_column SOLIC \
+  --analyst_label_column CATEGORIA_HALLAZGO
 ```
 
-## Actualización Etapa 4 v1.1.0
-
-Se reforzó el prompt maestro con separación explícita entre reglas obligatorias y reglas interpretativas por IA. El agente queda restringido a inferencia batch, sin comportamiento conversacional, y debe emitir exclusivamente JSON validado.
-
-### Componentes implementados
-
-- `src/midas/stage4/prompts.py`: prompt maestro, prompt de clasificación y prompt de reparación de JSON.
-- `src/midas/stage4/rules.py`: reglas determinísticas obligatorias para datos insuficientes, variación significativa, reclamos, PNO, error de lectura, constante e instalación/cambio.
-- `src/midas/stage4/agent_orchestrator.py`: orquestación de contexto, reglas, LLM, validación, retry de JSON y guardrails.
-- `src/midas/stage4/evaluation.py`: métricas batch, accuracy contra analista y discrepancias.
-- `src/midas/main_stage4_evaluation.py`: runner de evaluación contra tabla de decisión del analista.
-
-### Few-shots funcionales incluidos
-
-Los few-shots quedaron dentro del prompt de clasificación como patrones guía para:
-
-1. Variación con cambio de medidor o instalación.
-2. Variación significativa sin soporte.
-3. Reclamo/PQR relacionado.
-4. Constante mal configurada.
-5. Datos históricos insuficientes.
-6. Posible error de lectura.
-
-Cuando EPM entregue el documento detallado del analista Luis Eduardo con ejemplos reales, estos few-shots deben reemplazarse o complementarse con casos reales anonimizados.
-
-### Evaluación y refinamiento
-
-El ciclo recomendado es:
-
-1. Ejecutar `rules-only` sobre 40.000 registros para validar cobertura, tiempos y calidad del contrato de datos.
-2. Ejecutar `dry-run` con 5 a 20 registros para validar LLM y JSON.
-3. Ejecutar `persistente` con 100 a 300 órdenes.
-4. Comparar contra decisión del analista usando `main_stage4_evaluation.py`.
-5. Revisar discrepancias y ajustar prompt/reglas.
-6. Versionar prompt como `stage4-vX.Y.Z`.
+Nota: `resultado_ia` se usa como referencia histórica/analista, no como tabla final del nuevo agente.

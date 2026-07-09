@@ -1,9 +1,25 @@
--- Etapa 4 - Tablas Gold, logs y métricas para agente inteligente MIDAS.
+-- Etapa 4 - Tablas Delta para agente inteligente MIDAS.
 -- Reemplazar ${catalog}.${schema} por el ambiente correspondiente si se ejecuta manualmente.
 
-CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_resultados_gold (
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_contexto_agente_993_v0
+USING DELTA
+COMMENT 'Contexto estructurado de entrada para casuística 993. Se crea desde src/midas/stage4/context_builder.py.';
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agent_input_993_v0 (
+  id_orden BIGINT,
+  servicio_suscrito BIGINT,
+  actividad STRING,
+  tipo_consumo STRING,
+  agent_input_json STRING
+)
+USING DELTA
+COMMENT 'JSON de entrada del agente para casuística 993, sin datos personales.';
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_resultado_agente_ordenes_calidad_gold (
   orden_id STRING,
   producto_id STRING,
+  actividad STRING,
+  tipo_consumo STRING,
   fecha_proceso DATE,
   categoria STRING,
   decision STRING,
@@ -18,6 +34,8 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_res
   version_prompt STRING,
   version_modelo STRING,
   timestamp_inferencia TIMESTAMP,
+  agent_input_json STRING,
+  metricas_contexto_json STRING,
   raw_response STRING,
   json_valido BOOLEAN,
   error_validacion STRING,
@@ -28,10 +46,12 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_res
 )
 USING DELTA;
 
-CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_logs (
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_logs_agente_ordenes_calidad (
   run_id STRING,
   orden_id STRING,
   producto_id STRING,
+  actividad STRING,
+  tipo_consumo STRING,
   fecha_proceso DATE,
   ambiente STRING,
   etapa STRING,
@@ -44,7 +64,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_log
 )
 USING DELTA;
 
-CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_metricas (
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_metricas_agente_ordenes_calidad (
   run_id STRING,
   fecha_proceso DATE,
   ambiente STRING,
@@ -63,7 +83,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_met
 )
 USING DELTA;
 
-CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_agente_ordenes_calidad_evaluacion (
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.midas_evaluacion_agente_ordenes_calidad (
   run_id STRING,
   fecha_proceso DATE,
   ambiente STRING,

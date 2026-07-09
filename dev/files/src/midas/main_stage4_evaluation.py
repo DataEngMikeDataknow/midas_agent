@@ -107,11 +107,11 @@ def parse_args():
     parser.add_argument("--fecha_proceso", default=date.today().isoformat())
     parser.add_argument("--ambiente", required=True, choices=["dev", "qa", "uat", "prod"])
     parser.add_argument("--run_id", required=True)
-    parser.add_argument("--result_table", default="midas_agente_ordenes_calidad_resultados_gold")
+    parser.add_argument("--result_table", default="midas_resultado_agente_ordenes_calidad_gold")
     parser.add_argument("--analyst_table", default="")
     parser.add_argument("--analyst_order_column", default="orden_id")
     parser.add_argument("--analyst_label_column", default="categoria_analista")
-    parser.add_argument("--evaluation_table", default="midas_agente_ordenes_calidad_evaluacion")
+    parser.add_argument("--evaluation_table", default="midas_evaluacion_agente_ordenes_calidad")
     return parser.parse_args()
 
 

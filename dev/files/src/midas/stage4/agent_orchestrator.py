@@ -44,6 +44,7 @@ class Stage4AgentOrchestrator:
                 max_records=self.config.max_context_records,
             )
             context = self.normalizer.normalize(context_payload, self.config.fecha_proceso)
+            agent_input_json = self._agent_input_json(context, context_payload)
             rule_decision = self.rules.evaluate(context)
 
             if self.config.modo_ejecucion == "rules-only" or self.llm_client is None or rule_decision.hard_stop:
@@ -78,6 +79,8 @@ class Stage4AgentOrchestrator:
                 validation_error=validation_error,
                 latency_ms=int((time.perf_counter() - start) * 1000),
                 error=None,
+                context=context,
+                agent_input_json=agent_input_json,
             )
         except Exception as exc:
             log.exception("Fallo procesando orden en Etapa 4")
@@ -98,6 +101,8 @@ class Stage4AgentOrchestrator:
                 validation_error=validation_error or str(exc),
                 latency_ms=int((time.perf_counter() - start) * 1000),
                 error=str(exc),
+                context=fallback_context,
+                agent_input_json="",
             )
 
     def _output_from_rules(self, context, decision: RuleDecision) -> dict[str, Any]:
@@ -152,6 +157,29 @@ class Stage4AgentOrchestrator:
             "senales": decision.signals_as_dict(),
         }
 
+
+    def _agent_input_json(self, context, context_payload: dict[str, Any]) -> str:
+        if context_payload.get("agent_input_json"):
+            return str(context_payload["agent_input_json"])
+        if context.agent_input:
+            return json.dumps(context.agent_input, ensure_ascii=False, default=str)
+        return json.dumps(context.compact_dict(self.config.max_context_records), ensure_ascii=False, default=str)
+
+    def _context_metadata(self, context) -> dict[str, Any]:
+        data = context.agent_input or {}
+        orden = data.get("orden") or context.orden.payload or {}
+        consumo = data.get("consumo_principal") or {}
+        calidad = data.get("calidad_dato") or {}
+        return {
+            "actividad": orden.get("actividad") or context.orden.payload.get("actividad"),
+            "tipo_consumo": consumo.get("tipo_consumo") or context.orden.payload.get("tipo_consumo"),
+            "metricas_contexto_json": json.dumps({
+                "calidad_dato": calidad,
+                "antecedentes": data.get("antecedentes") or {},
+                "consumo_principal": consumo,
+            }, ensure_ascii=False, default=str),
+        }
+
     def _safe_context_from_order(self, orden: dict[str, Any]):
         return self.normalizer.normalize(
             {
@@ -176,7 +204,10 @@ class Stage4AgentOrchestrator:
         validation_error: Optional[str],
         latency_ms: int,
         error: Optional[str],
+        context=None,
+        agent_input_json: str = "",
     ) -> dict[str, Any]:
+        metadata = self._context_metadata(context) if context is not None else {"actividad": None, "tipo_consumo": None, "metricas_contexto_json": None}
         return {
             "output": output,
             "raw_response": raw_response,
@@ -187,4 +218,8 @@ class Stage4AgentOrchestrator:
             "run_id": self.config.run_id,
             "ambiente": self.config.ambiente,
             "modo_ejecucion": self.config.modo_ejecucion,
+            "actividad": metadata.get("actividad"),
+            "tipo_consumo": metadata.get("tipo_consumo"),
+            "agent_input_json": agent_input_json,
+            "metricas_contexto_json": metadata.get("metricas_contexto_json"),
         }

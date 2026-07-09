@@ -163,6 +163,7 @@ class OrdenContext:
     detalle_cargos: list[DetalleCargo]
     fecha_proceso: str
     datos_consultados: DatosConsultados
+    agent_input: dict[str, Any] = field(default_factory=dict)
 
     @property
     def orden_id(self) -> str:
@@ -173,6 +174,9 @@ class OrdenContext:
         return self.orden.producto_id or str(self.producto.get("servicio_suscrito", "producto_id", default="") if self.producto else "")
 
     def compact_dict(self, max_records: int = 12) -> dict[str, Any]:
+        if self.agent_input:
+            return self.agent_input
+
         def shrink(rows: list[FuenteDatos]) -> list[dict[str, Any]]:
             return [row.payload for row in rows[:max_records]]
 

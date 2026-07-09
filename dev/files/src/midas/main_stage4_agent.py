@@ -93,6 +93,7 @@ from pyspark.sql import SparkSession
 
 from midas.stage4.agent_orchestrator import Stage4AgentOrchestrator
 from midas.stage4.config import Stage4Config
+from midas.stage4.context_builder import Stage4ContextBuilder
 from midas.stage4.data_access import UnityCatalogDataAccess
 from midas.stage4.llm import DatabricksServingLLMClient
 from midas.stage4.persistence import Stage4Persistence
@@ -110,16 +111,20 @@ def parse_args():
     parser.add_argument("--limite_ordenes", type=int, default=300)
     parser.add_argument("--modo_ejecucion", choices=["dry-run", "persistente", "rules-only"], default="dry-run")
     parser.add_argument("--model_endpoint", default=None)
-    parser.add_argument("--result_table", default="midas_agente_ordenes_calidad_resultados_gold")
-    parser.add_argument("--log_table", default="midas_agente_ordenes_calidad_logs")
-    parser.add_argument("--metrics_table", default="midas_agente_ordenes_calidad_metricas")
-    parser.add_argument("--prompt_version", default="stage4-v1.0.0")
+    parser.add_argument("--result_table", default="midas_resultado_agente_ordenes_calidad_gold")
+    parser.add_argument("--log_table", default="midas_logs_agente_ordenes_calidad")
+    parser.add_argument("--metrics_table", default="midas_metricas_agente_ordenes_calidad")
+    parser.add_argument("--prompt_version", default="stage4-993-v2.0.0")
     parser.add_argument("--model_version", default="databricks-serving-endpoint")
-    parser.add_argument("--umbral_variacion", type=float, default=0.30)
+    parser.add_argument("--umbral_variacion", type=float, default=30.0)
     parser.add_argument("--max_context_records", type=int, default=12)
     parser.add_argument("--request_timeout_seconds", type=int, default=60)
     parser.add_argument("--max_retries", type=int, default=2)
     parser.add_argument("--run_id", default="")
+    parser.add_argument("--input_mode", choices=["context", "raw"], default="context")
+    parser.add_argument("--build_context", choices=["true", "false"], default="true")
+    parser.add_argument("--context_table", default="midas_contexto_agente_993_v0")
+    parser.add_argument("--agent_input_table", default="midas_agent_input_993_v0")
     return parser.parse_args()
 
 
@@ -143,6 +148,10 @@ def main():
         model_version=args.model_version,
         umbral_variacion=args.umbral_variacion,
         max_context_records=args.max_context_records,
+        input_mode=args.input_mode,
+        build_context=(args.build_context == "true"),
+        context_table=args.context_table,
+        agent_input_table=args.agent_input_table,
     )
 
     log.info("Inicio Etapa 4 run_id=%s modo=%s fecha=%s limite=%s", config.run_id, config.modo_ejecucion, config.fecha_proceso, config.limite_ordenes)
@@ -161,8 +170,19 @@ def main():
     orchestrator = Stage4AgentOrchestrator(data_access, config, llm_client)
     persistence = Stage4Persistence(spark, config.catalog, config.schema)
 
-    pending_orders = data_access.list_pending_orders(config.fecha_proceso, config.limite_ordenes)
-    log.info("Órdenes pendientes a procesar: %s", len(pending_orders))
+    if config.input_mode == "context":
+        context_builder = Stage4ContextBuilder(spark, config.catalog, config.schema)
+        if config.build_context:
+            context_full, agent_input_full = context_builder.save_context_993(
+                context_table=config.context_table,
+                agent_input_table=config.agent_input_table,
+                mode="overwrite",
+            )
+            log.info("Contexto Stage4 993 materializado: %s | %s", context_full, agent_input_full)
+        pending_orders = data_access.list_pending_agent_inputs(config.limite_ordenes, config.agent_input_table)
+    else:
+        pending_orders = data_access.list_pending_orders(config.fecha_proceso, config.limite_ordenes)
+    log.info("Órdenes/inputs pendientes a procesar: %s", len(pending_orders))
 
     envelopes = []
     for idx, orden in enumerate(pending_orders, start=1):

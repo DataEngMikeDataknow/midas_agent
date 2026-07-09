@@ -59,6 +59,10 @@ class Stage4Persistence:
             typed_output["timestamp_inferencia"] = _parse_timestamp(output.get("timestamp_inferencia"))
             rows.append({
                 **typed_output,
+                "actividad": envelope.get("actividad"),
+                "tipo_consumo": envelope.get("tipo_consumo"),
+                "agent_input_json": envelope.get("agent_input_json"),
+                "metricas_contexto_json": envelope.get("metricas_contexto_json"),
                 "raw_response": envelope.get("raw_response"),
                 "json_valido": bool(envelope.get("json_valido")),
                 "error_validacion": envelope.get("error_validacion"),
@@ -79,6 +83,8 @@ class Stage4Persistence:
                 "run_id": envelope.get("run_id"),
                 "orden_id": output.get("orden_id"),
                 "producto_id": output.get("producto_id"),
+                "actividad": envelope.get("actividad"),
+                "tipo_consumo": envelope.get("tipo_consumo"),
                 "fecha_proceso": _parse_date(fecha_proceso),
                 "ambiente": envelope.get("ambiente"),
                 "etapa": "stage4_agent_inference",
@@ -91,6 +97,8 @@ class Stage4Persistence:
                     "json_valido": envelope.get("json_valido"),
                     "error_validacion": envelope.get("error_validacion"),
                     "requiere_revision_humana": output.get("requiere_revision_humana"),
+                    "actividad": envelope.get("actividad"),
+                    "tipo_consumo": envelope.get("tipo_consumo"),
                 }, ensure_ascii=False),
                 "latencia_ms": envelope.get("latency_ms"),
                 "timestamp_evento": now,

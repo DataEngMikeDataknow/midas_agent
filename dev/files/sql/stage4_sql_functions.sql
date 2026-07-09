@@ -1,6 +1,6 @@
--- Etapa 4 - SQL Functions controladas del agente.
+-- Etapa 4 - SQL Functions controladas del agente MIDAS.
 -- La implementación productiva se genera desde src/midas/stage4/tools_sql.py
--- para inyectar catalog/schema validados por ambiente.
+-- para inyectar catalog/schema validados por ambiente y evitar SQL libre.
 
 -- Funciones creadas:
 -- 1. midas_stage4_get_orden_pendiente(p_orden_id STRING)
@@ -9,5 +9,8 @@
 -- 4. midas_stage4_get_consumos(p_producto_id STRING, p_limit INT)
 -- 5. midas_stage4_get_critica_previa(p_producto_id STRING, p_limit INT)
 -- 6. midas_stage4_get_comentarios(p_orden_id STRING, p_limit INT)
+--    Nota: usa lista_comentarios de midas_historial_critica_silver porque
+--    midas_datos_comentarios_ordenes_bronze no existe en el mapa real validado.
 -- 7. midas_stage4_get_cuentas_cobro(p_producto_id STRING, p_limit INT)
 -- 8. midas_stage4_get_detalle_cargos(p_id_cuenta_cobro STRING, p_limit INT)
+-- 9. midas_stage4_get_agent_input_993(p_orden_id STRING)

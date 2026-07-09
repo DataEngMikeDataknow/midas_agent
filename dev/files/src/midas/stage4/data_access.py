@@ -7,6 +7,7 @@ previamente saneados.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ except Exception:  # pragma: no cover
     SparkSession = Any  # type: ignore
     col = lit = to_date = None  # type: ignore
 
-from .constants import LEGACY_TABLE_FALLBACKS, TABLE_BY_QUERY_KEY, QueryKey
+from .constants import DEFAULT_AGENT_INPUT_TABLE_993, LEGACY_TABLE_FALLBACKS, TABLE_BY_QUERY_KEY, QueryKey
 from .models import rows_to_dicts
 
 log = logging.getLogger(__name__)
@@ -88,6 +89,22 @@ class UnityCatalogDataAccess:
                 except Exception:
                     continue
             raise
+
+
+    def table_by_name(self, table_name: str) -> DataFrame:
+        return self.spark.table(full_table_name(self.catalog, self.schema, validate_identifier(table_name, "table")))
+
+    def table_exists(self, table_name: str) -> bool:
+        try:
+            self.spark.table(full_table_name(self.catalog, self.schema, validate_identifier(table_name, "table"))).limit(1).collect()
+            return True
+        except Exception:
+            return False
+
+    def list_pending_agent_inputs(self, limit: int, agent_input_table: str = DEFAULT_AGENT_INPUT_TABLE_993) -> list[dict[str, Any]]:
+        """Lee el contrato de entrada materializado para la casuística 993."""
+        df = self.table_by_name(agent_input_table)
+        return self.collect(df, limit=limit)
 
     def collect(self, df: DataFrame, limit: Optional[int] = None) -> list[dict[str, Any]]:
         if limit is not None:
@@ -202,6 +219,14 @@ class UnityCatalogDataAccess:
         return self.collect(df, limit=limit)
 
     def fetch_context_payload(self, orden: dict[str, Any], max_records: int) -> dict[str, Any]:
+        if orden.get("agent_input_json"):
+            try:
+                return {"agent_input": json.loads(orden["agent_input_json"]), "agent_input_json": orden["agent_input_json"]}
+            except Exception:
+                log.warning("No fue posible parsear agent_input_json; se tratará como fila plana.")
+        if "consumo_facturado_actual" in orden and "tipo_consumo" in orden:
+            return {"contexto_precalculado": orden}
+
         orden_id = str(orden.get("orden_id") or orden.get("id_orden") or orden.get("order_id") or "")
         producto_id = str(orden.get("producto_id") or orden.get("servicio_suscrito") or orden.get("product_id") or "")
         instalacion = str(orden.get("instalacion") or orden.get("address_id") or "")

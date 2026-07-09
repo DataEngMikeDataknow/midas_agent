@@ -86,6 +86,8 @@ RESULTS_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS {full_table} (
   orden_id STRING,
   producto_id STRING,
+  actividad STRING,
+  tipo_consumo STRING,
   fecha_proceso DATE,
   categoria STRING,
   decision STRING,
@@ -100,6 +102,8 @@ CREATE TABLE IF NOT EXISTS {full_table} (
   version_prompt STRING,
   version_modelo STRING,
   timestamp_inferencia TIMESTAMP,
+  agent_input_json STRING,
+  metricas_contexto_json STRING,
   raw_response STRING,
   json_valido BOOLEAN,
   error_validacion STRING,
@@ -109,7 +113,7 @@ CREATE TABLE IF NOT EXISTS {full_table} (
   created_at TIMESTAMP
 )
 USING DELTA
-COMMENT 'Resultados Gold del agente inteligente Etapa 4 para órdenes de calidad MIDAS.'
+COMMENT 'Resultados Gold del agente inteligente Etapa 4 para órdenes de calidad MIDAS. Incluye casuística 993 y trazabilidad de entrada.'
 """
 
 LOGS_TABLE_DDL = """
@@ -117,6 +121,8 @@ CREATE TABLE IF NOT EXISTS {full_table} (
   run_id STRING,
   orden_id STRING,
   producto_id STRING,
+  actividad STRING,
+  tipo_consumo STRING,
   fecha_proceso DATE,
   ambiente STRING,
   etapa STRING,

@@ -9,7 +9,7 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     SparkSession = Any  # type: ignore
 
-from .constants import TABLE_BY_QUERY_KEY, QueryKey
+from .constants import DEFAULT_AGENT_INPUT_TABLE_993, TABLE_BY_QUERY_KEY, QueryKey
 from .data_access import full_table_name, validate_identifier
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,8 @@ class Stage4SqlToolBuilder:
         self.spark.sql(f"USE SCHEMA `{schema}`")
 
         t = {key: full_table_name(catalog, schema, table) for key, table in TABLE_BY_QUERY_KEY.items()}
-        comments_table = t[QueryKey.COMENTARIOS_ORDENES]
+        comments_table = t[QueryKey.ORDENES_CRITICA_PREVIA]
+        agent_input_table = full_table_name(catalog, schema, DEFAULT_AGENT_INPUT_TABLE_993)
 
         log.info("Creando SQL Functions Stage4 en %s.%s", catalog, schema)
 
@@ -98,12 +99,11 @@ RETURN (
         self.spark.sql(f"""
 CREATE OR REPLACE FUNCTION midas_stage4_get_comentarios(p_orden_id STRING COMMENT 'Id de orden', p_limit INT COMMENT 'Máximo de registros')
 RETURNS TABLE(payload_json STRING)
-COMMENT 'Retorna comentarios de órdenes como JSON controlado.'
+COMMENT 'Retorna comentarios embebidos en historial de crítica como JSON controlado. Usa lista_comentarios porque la tabla legacy de comentarios puede no existir.'
 RETURN (
-  SELECT TO_JSON(STRUCT(*)) AS payload_json
+  SELECT TO_JSON(STRUCT(id_orden, servicio_suscrito, lista_comentarios)) AS payload_json
   FROM {comments_table}
   WHERE CAST(id_orden AS STRING) = p_orden_id
-  ORDER BY fecha_registro DESC
   LIMIT p_limit
 )
 """)
@@ -130,6 +130,19 @@ RETURN (
   FROM {t[QueryKey.DETALLE_CARGOS]}
   WHERE CAST(id_cuenta_cobro AS STRING) = p_id_cuenta_cobro
   LIMIT p_limit
+)
+""")
+
+
+        self.spark.sql(f"""
+CREATE OR REPLACE FUNCTION midas_stage4_get_agent_input_993(p_orden_id STRING COMMENT 'Id de orden de calidad 993')
+RETURNS TABLE(agent_input_json STRING)
+COMMENT 'Retorna el contrato de entrada JSON del agente para una orden 993 ya materializada.'
+RETURN (
+  SELECT agent_input_json
+  FROM {agent_input_table}
+  WHERE CAST(id_orden AS STRING) = p_orden_id
+  LIMIT 1
 )
 """)
 
