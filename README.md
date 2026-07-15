@@ -89,9 +89,12 @@ Client, sin `libaio`). UC no intercepta ese tráfico.
 - Job clusters efímeros (`uat`/`pdn`) con `data_security_mode: SINGLE_USER` +
   `single_user_name = <service_principal>` (modo correcto para JVM-en-proceso;
   no rompe UC).
-- Librerías `JayDeBeApi` y `JPype1`: declaradas como `libraries` de la task
-  `extraer_datos_oracle` en `uat`/`pdn`; **preinstaladas** por el admin en el
-  cluster compartido de `dllo`.
+- Librerías `JayDeBeApi` y `JPype1`: se instalan con **`%pip` en la primera celda**
+  del notebook `notebooks/10_extraer_datos_oracle.py`, igual en los tres ambientes.
+  **Ningún target declara `libraries`**: por restricción de plataforma EPM no se
+  pueden instalar librerías a nivel de cluster (mismo motivo por el que
+  `vera_framework` tampoco las declara). Por eso la task de extracción es un
+  `notebook_task` y no un `spark_python_task` (este último no puede ejecutar `%pip`).
 
 ### Ubicación del jar y GRANTs
 - El jar vive en un Volume UC; la ruta se pasa como variable
@@ -154,8 +157,9 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
 3. Habilitación de red por workspace/subnet hacia Oracle:
    `dllo`/`uat` → `epm-to34:1521`; **`pdn` → `epm-po34:1522`** (cada subnet
    requiere su propia apertura; que `uat` funcione no implica `pdn`).
-4. Instalar `JayDeBeApi` y `JPype1` en el cluster compartido de `dllo`
-   (`0722-211855-e1a090ph`).
+4. **Salida a PyPI** desde los clusters (para el `%pip install JayDeBeApi JPype1` de
+   la task de extracción). Ya validado en el cluster compartido de `dllo`
+   (`0722-211855-e1a090ph`). No se requiere instalar librerías a nivel de cluster.
 5. El SP necesita `CREATE TABLE` en el schema destino: la task `crear_objetos`
    crea/siembra `midas_control_cargas` y `midas_log_cargas` (con `job_name`) de
    forma idempotente en cada corrida. No hay paso manual de seed.

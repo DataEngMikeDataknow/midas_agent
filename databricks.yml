@@ -146,9 +146,13 @@ targets:
           queue:
             enabled: true
           # dllo corre sobre el cluster compartido (existing_cluster_id): el SP
-          # no puede crear clusters. NO se declara `libraries` aquí: instalar
-          # requiere Manage sobre el cluster; el admin preinstala JayDeBeApi y
-          # JPype1 en el cluster compartido (Compute → cluster → Libraries).
+          # no puede crear clusters.
+          # NINGÚN target declara `libraries`: por restricción de plataforma EPM no
+          # se pueden instalar libs a nivel de cluster (alineado con vera_framework,
+          # que tampoco declara `libraries` en ningún target). El driver Oracle
+          # (JayDeBeApi + JPype1) se instala por `%pip` en la primera celda del
+          # notebook `10_extraer_datos_oracle.py` — único mecanismo validado en
+          # producción. Por eso la extracción es notebook_task y no spark_python_task.
           tasks:
             # Primera task (patrón alineado con vera_framework): crea/siembra de
             # forma idempotente el plano de control. No usa Oracle → sin libraries.
@@ -159,31 +163,23 @@ targets:
                 base_parameters:
                   catalog_destino: ${var.catalog_destino}
                   schema_destino: ${var.schema_destino}
+            # notebook_task: el driver JDBC se instala por %pip en la 1a celda.
             - task_key: extraer_datos_oracle
               depends_on:
                 - task_key: crear_objetos
               existing_cluster_id: ${var.cluster_id}
-              spark_python_task:
-                python_file: ./src/midas/main_data_fetcher.py
-                parameters:
-                  - "--db_user"
-                  - "${var.oracle_user}"
-                  - "--db_dsn"
-                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
-                  - "--secret_scope"
-                  - "${var.oracle_secret_scope}"
-                  - "--db_password_secret_key"
-                  - "${var.oracle_password_key}"
-                  - "--oracle_jdbc_jar_path"
-                  - "${var.oracle_jdbc_jar_path}"
-                  - "--output_path"
-                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
-                  - "--control_catalog"
-                  - "${var.catalog_destino}"
-                  - "--control_schema"
-                  - "${var.schema_destino}"
-                  - "--job_name"
-                  - "midas_bronze"
+              notebook_task:
+                notebook_path: ./notebooks/10_extraer_datos_oracle.py
+                base_parameters:
+                  db_user: ${var.oracle_user}
+                  db_dsn: "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  secret_scope: ${var.oracle_secret_scope}
+                  db_password_secret_key: ${var.oracle_password_key}
+                  oracle_jdbc_jar_path: ${var.oracle_jdbc_jar_path}
+                  output_path: "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  control_catalog: ${var.catalog_destino}
+                  control_schema: ${var.schema_destino}
+                  job_name: midas_bronze
             - task_key: actualizar_ordenes_calidad
               depends_on:
                 - task_key: extraer_datos_oracle
@@ -293,37 +289,24 @@ targets:
                 base_parameters:
                   catalog_destino: ${var.catalog_destino}
                   schema_destino: ${var.schema_destino}
+            # notebook_task + %pip: NO se declara `libraries` (restricción de
+            # plataforma EPM; alineado con vera_framework). Ver cabecera del notebook.
             - task_key: extraer_datos_oracle
               depends_on:
                 - task_key: crear_objetos
               job_cluster_key: midas_cluster
-              # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
-              libraries:
-                - pypi:
-                    package: JayDeBeApi
-                - pypi:
-                    package: JPype1
-              spark_python_task:
-                python_file: ./src/midas/main_data_fetcher.py
-                parameters:
-                  - "--db_user"
-                  - "${var.oracle_user}"
-                  - "--db_dsn"
-                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
-                  - "--secret_scope"
-                  - "${var.oracle_secret_scope}"
-                  - "--db_password_secret_key"
-                  - "${var.oracle_password_key}"
-                  - "--oracle_jdbc_jar_path"
-                  - "${var.oracle_jdbc_jar_path}"
-                  - "--output_path"
-                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
-                  - "--control_catalog"
-                  - "${var.catalog_destino}"
-                  - "--control_schema"
-                  - "${var.schema_destino}"
-                  - "--job_name"
-                  - "midas_bronze"
+              notebook_task:
+                notebook_path: ./notebooks/10_extraer_datos_oracle.py
+                base_parameters:
+                  db_user: ${var.oracle_user}
+                  db_dsn: "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  secret_scope: ${var.oracle_secret_scope}
+                  db_password_secret_key: ${var.oracle_password_key}
+                  oracle_jdbc_jar_path: ${var.oracle_jdbc_jar_path}
+                  output_path: "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  control_catalog: ${var.catalog_destino}
+                  control_schema: ${var.schema_destino}
+                  job_name: midas_bronze
             - task_key: actualizar_ordenes_calidad
               depends_on:
                 - task_key: extraer_datos_oracle
@@ -464,37 +447,24 @@ targets:
                 base_parameters:
                   catalog_destino: ${var.catalog_destino}
                   schema_destino: ${var.schema_destino}
+            # notebook_task + %pip: NO se declara `libraries` (restricción de
+            # plataforma EPM; alineado con vera_framework). Ver cabecera del notebook.
             - task_key: extraer_datos_oracle
               depends_on:
                 - task_key: crear_objetos
               job_cluster_key: midas_cluster
-              # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
-              libraries:
-                - pypi:
-                    package: JayDeBeApi
-                - pypi:
-                    package: JPype1
-              spark_python_task:
-                python_file: ./src/midas/main_data_fetcher.py
-                parameters:
-                  - "--db_user"
-                  - "${var.oracle_user}"
-                  - "--db_dsn"
-                  - "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
-                  - "--secret_scope"
-                  - "${var.oracle_secret_scope}"
-                  - "--db_password_secret_key"
-                  - "${var.oracle_password_key}"
-                  - "--oracle_jdbc_jar_path"
-                  - "${var.oracle_jdbc_jar_path}"
-                  - "--output_path"
-                  - "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
-                  - "--control_catalog"
-                  - "${var.catalog_destino}"
-                  - "--control_schema"
-                  - "${var.schema_destino}"
-                  - "--job_name"
-                  - "midas_bronze"
+              notebook_task:
+                notebook_path: ./notebooks/10_extraer_datos_oracle.py
+                base_parameters:
+                  db_user: ${var.oracle_user}
+                  db_dsn: "${var.oracle_host}:${var.oracle_port}/${var.oracle_service}"
+                  secret_scope: ${var.oracle_secret_scope}
+                  db_password_secret_key: ${var.oracle_password_key}
+                  oracle_jdbc_jar_path: ${var.oracle_jdbc_jar_path}
+                  output_path: "/Volumes/${var.source_catalog}/${var.source_schema}/${var.source_volume}/${var.source_base_path}"
+                  control_catalog: ${var.catalog_destino}
+                  control_schema: ${var.schema_destino}
+                  job_name: midas_bronze
             - task_key: actualizar_ordenes_calidad
               depends_on:
                 - task_key: extraer_datos_oracle
