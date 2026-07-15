@@ -16,9 +16,10 @@ Modelo de log (esquema real):
 NOTA sobre id_carga NOT NULL en el log:
   El DDL real de midas_log_cargas declara id_carga BIGINT NOT NULL. Por eso
   TODAS las 8 tablas Bronze deben existir como filas en midas_control_cargas
-  antes de correr (ver seed_control_cargas.sql). Si una tabla no esta en
-  control, get_id_carga devuelve None y el INSERT fallaria por NOT NULL.
-  El seed de las 8 tablas es, por tanto, prerequisito.
+  antes de correr (las siembra la task crear_objetos ->
+  notebooks/00_creacion_objetos_midas.py). Si una tabla no esta en control,
+  get_id_carga devuelve None y el INSERT fallaria por NOT NULL. El bootstrap
+  de las 8 tablas es, por tanto, prerequisito.
 """
 import logging
 from datetime import datetime

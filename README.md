@@ -21,13 +21,16 @@ agente.
                         job: midas_bronze_silver_<target>   (07:00 America/Bogota)
    ┌─────────────────────────────────────────────────────────────────────────────┐
    │                                                                               │
-   │  1) extraer_datos_oracle                                                      │
+   │  1) crear_objetos                (notebook, idempotente, patrón Vera)         │
+   │     DDL control/log + bootstrap de las 8 filas FULL_CHAINED (job_name)        │
+   │                                                                               │
+   │  2) extraer_datos_oracle                                                      │
    │     Oracle ──JDBC(ojdbc11/JayDeBeApi, driver-side)──▶ *.parquet en Volume UC  │
    │                                                                               │
-   │  2) actualizar_ordenes_calidad                                                │
+   │  3) actualizar_ordenes_calidad                                                │
    │     Parquet ──insertInto(overwrite=True)──▶ 8 tablas *_bronze                 │
    │                                                                               │
-   │  3) bronze_to_silver                                                          │
+   │  4) bronze_to_silver                                                          │
    │     *_bronze ──transformaciones──▶ tablas *_silver                            │
    │                                                                               │
    └─────────────────────────────────────────────────────────────────────────────┘
@@ -35,6 +38,10 @@ agente.
                                     ▼
               Silver consumida por el bundle `midas_agent` (inferencia)
 ```
+
+Job de diagnóstico on-demand `midas_check_conectividad_<target>` (solo uat/pdn,
+sin schedule): valida red + credenciales + listener contra Oracle antes de correr
+la cadena.
 
 **Contrato entre bundles:** este bundle produce las Silver; la inferencia del
 agente debe correr **después de ~09:00** o validar en `midas_log_cargas` que la
@@ -131,7 +138,9 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
 - **Plano de control con `job_name`**: `midas_control_cargas` y
   `midas_log_cargas` son COMPARTIDAS con otros jobs (p. ej. `vera_framework`).
   Todos los runners de este bundle usan `job_name = "midas_bronze"` para
-  discriminar sus filas. Ver `sql/seed_control_cargas.sql`.
+  discriminar sus filas. El DDL + bootstrap idempotente de las 8 filas lo hace
+  la primera task del job, `crear_objetos`
+  (`notebooks/00_creacion_objetos_midas.py`).
 
 ---
 
@@ -147,17 +156,22 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
    requiere su propia apertura; que `uat` funcione no implica `pdn`).
 4. Instalar `JayDeBeApi` y `JPype1` en el cluster compartido de `dllo`
    (`0722-211855-e1a090ph`).
-5. Sembrar/migrar `job_name` en `midas_control_cargas` de cada ambiente con
-   `sql/seed_control_cargas.sql`.
+5. El SP necesita `CREATE TABLE` en el schema destino: la task `crear_objetos`
+   crea/siembra `midas_control_cargas` y `midas_log_cargas` (con `job_name`) de
+   forma idempotente en cada corrida. No hay paso manual de seed.
 
 ---
 
 ## Estructura
 
 ```
-databricks.yml                 Definición del bundle (targets dllo/uat/pdn, job por target)
-pipeline/deploy-bundle.yml     CI/CD Azure DevOps (desarrollo→dllo, pruebas→uat, produccion→pdn)
-sql/seed_control_cargas.sql    Seed/migración de midas_control_cargas (con job_name)
+databricks.yml                          Definición del bundle (targets dllo/uat/pdn, jobs por target)
+pipeline/deploy-bundle.yml              CI/CD Azure DevOps (desarrollo→dllo, pruebas→uat, produccion→pdn)
+docs/adr/0001-bundles-separados-vera-midas.md   ADR: por qué bundles separados
+notebooks/
+  00_creacion_objetos_midas.py          Task crear_objetos: DDL + bootstrap del control (job_name)
+  check_conectividad_oracle.py          Job midas_check_conectividad (preflight Oracle, uat/pdn)
+  validacion_control_cargas.py          Notebook de validación del plano de control
 src/midas/
   db/database.py               Conector Oracle JDBC (ojdbc11 + JayDeBeApi + JPype1)
   db/queries.py                Consultas SQL (binds nombrados :param)
@@ -166,11 +180,41 @@ src/midas/
   framework/chain_runner.py    Orquestación de la cadena de extracción
   ingestion.py                 Parquet → Bronze (insertInto)
   transformations.py           Bronze → Silver
-  main_data_fetcher.py         Runner tarea 1 (extracción)
-  main_ingestion.py            Runner tarea 2 (bronze)
-  main_transform.py            Runner tarea 3 (silver)
+  main_data_fetcher.py         Runner: extracción Oracle → Parquet
+  main_ingestion.py            Runner: Parquet → Bronze
+  main_transform.py            Runner: Bronze → Silver
 tests/                         Suite de pruebas (mockea Spark/JVM)
 ```
+
+---
+
+## Relación con el bundle `vera_framework`
+
+`vera_framework` es un bundle/repo **independiente** (ya en producción) que
+comparte con este la fuente Oracle, los Service Principals por ambiente y el
+**plano de control** (`midas_control_cargas` / `midas_log_cargas`). No se
+fusionan; convergen en convenciones. Ver
+[ADR 0001](docs/adr/0001-bundles-separados-vera-midas.md).
+
+Plano de control compartido, discriminado por `job_name`:
+
+| job_name          | bundle                 | motor                  | schedule            |
+|-------------------|------------------------|------------------------|---------------------|
+| `vera_framework`  | `vera_framework`       | `QUERY_FULL_OVERWRITE` | 04:00 America/Bogota |
+| `midas_bronze`    | `midas_data_platform`  | `FULL_CHAINED`         | 07:00 America/Bogota |
+
+> ⚠️ **Advertencia operativa:** las tablas de control son **compartidas** y
+> ningún bundle las posee en exclusiva. **Nunca** hagas `bundle destroy`
+> asumiendo que "limpia" `midas_control_cargas` / `midas_log_cargas`: borrarías
+> también las filas y el histórico del otro bundle.
+
+Convergencias con Vera (fuente de verdad en producción): conector JDBC espejo
+(ojdbc11 + JayDeBeApi, misma URL `jdbc:oracle:thin:@host:puerto/servicio`),
+runtime 16.4/JDK17, `SINGLE_USER`, patrón `crear_objetos` como primera task,
+nombres de variables del `databricks.yml` y estructura del pipeline. Divergencia
+deliberada: Midas convierte `NUMBER` a `int`/`float` (no `Decimal`) por la
+paridad de schema Parquet con las Bronze existentes (ver `_to_python` en
+`database.py`).
 
 ---
 

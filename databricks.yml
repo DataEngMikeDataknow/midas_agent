@@ -150,7 +150,18 @@ targets:
           # requiere Manage sobre el cluster; el admin preinstala JayDeBeApi y
           # JPype1 en el cluster compartido (Compute → cluster → Libraries).
           tasks:
+            # Primera task (patrón alineado con vera_framework): crea/siembra de
+            # forma idempotente el plano de control. No usa Oracle → sin libraries.
+            - task_key: crear_objetos
+              existing_cluster_id: ${var.cluster_id}
+              notebook_task:
+                notebook_path: ./notebooks/00_creacion_objetos_midas.py
+                base_parameters:
+                  catalog_destino: ${var.catalog_destino}
+                  schema_destino: ${var.schema_destino}
             - task_key: extraer_datos_oracle
+              depends_on:
+                - task_key: crear_objetos
               existing_cluster_id: ${var.cluster_id}
               spark_python_task:
                 python_file: ./src/midas/main_data_fetcher.py
@@ -229,7 +240,9 @@ targets:
       oracle_port: "1521"
       oracle_service: SFUAT
       oracle_user: SQL_EPMBOTPD05
-      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-DLLO
+      # alineado con vera_framework: uat tiene su propio secret scope (KV-UAT),
+      # distinto del de dllo.
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-NP-KV-UAT
       oracle_password_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
       oracle_jdbc_jar_path: /Volumes/epm_datalake_vol_np/facturacion_vol/facturacion_bronze_vol/_oracle_client/ojdbc11-23.26.2.0.0.jar
       pause_schedule: UNPAUSED
@@ -271,7 +284,18 @@ targets:
                 data_security_mode: SINGLE_USER            # requerido para JPype/JVM en proceso (I5)
                 single_user_name: ${var.service_principal}
           tasks:
+            # Primera task (patrón alineado con vera_framework): crea/siembra de
+            # forma idempotente el plano de control. No usa Oracle → sin libraries.
+            - task_key: crear_objetos
+              job_cluster_key: midas_cluster
+              notebook_task:
+                notebook_path: ./notebooks/00_creacion_objetos_midas.py
+                base_parameters:
+                  catalog_destino: ${var.catalog_destino}
+                  schema_destino: ${var.schema_destino}
             - task_key: extraer_datos_oracle
+              depends_on:
+                - task_key: crear_objetos
               job_cluster_key: midas_cluster
               # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
               libraries:
@@ -337,6 +361,37 @@ targets:
                   - "--schema"
                   - "${var.schema_destino}"
 
+        # Job de diagnóstico on-demand (patrón alineado con vera_framework).
+        # Solo en uat/pdn, donde la red hacia Oracle es el riesgo (en dllo no
+        # es necesario). Sin schedule: se lanza a mano para aislar fallos de
+        # red/credenciales/listener antes de correr la cadena.
+        midas_check_conectividad:
+          name: midas_check_conectividad_${bundle.target}
+          permissions:
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+          job_clusters:
+            - job_cluster_key: midas_cluster
+              new_cluster:
+                spark_version: ${var.spark_version}       # 16.4 = JDK 17 (I4)
+                node_type_id: ${var.node_type_id}
+                num_workers: ${var.num_workers}
+                data_security_mode: SINGLE_USER            # requerido para JPype/JVM (I5)
+                single_user_name: ${var.service_principal}
+          tasks:
+            - task_key: check
+              job_cluster_key: midas_cluster
+              notebook_task:
+                notebook_path: ./notebooks/check_conectividad_oracle.py
+                base_parameters:
+                  oracle_host: ${var.oracle_host}
+                  oracle_port: ${var.oracle_port}
+                  oracle_service: ${var.oracle_service}
+                  oracle_user: ${var.oracle_user}
+                  oracle_secret_scope: ${var.oracle_secret_scope}
+                  oracle_password_key: ${var.oracle_password_key}
+                  oracle_jdbc_jar_path: ${var.oracle_jdbc_jar_path}
+
   # ------------------------------ PRODUCCIÓN (pdn) --------------------------
   pdn:
     mode: production
@@ -356,8 +411,10 @@ targets:
       oracle_port: "1522"
       oracle_service: SFPDN
       oracle_user: SQL_EPMBOTPD05
-      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-PROD
-      oracle_password_key: AZ-SECRET-EPM-BOTPD05-FACTURACION-CTATECNICA
+      # alineado con vera_framework: en pdn el scope y la key difieren de np.
+      # (vera_framework/databricks.yml es la fuente de verdad en producción.)
+      oracle_secret_scope: AZ-SecretScopeDBKS-EPM-PROD-KV
+      oracle_password_key: AZ-SECRET-EPM-OPEN-DB-CTATECNICA
       oracle_jdbc_jar_path: /Volumes/epm_datalake_vol_prod/facturacion_vol/facturacion_bronze_vol/_oracle_client/ojdbc11-23.26.2.0.0.jar
       pause_schedule: UNPAUSED
       service_principal: 1db15634-31b7-4f92-a976-fc8920216152
@@ -398,7 +455,18 @@ targets:
                 data_security_mode: SINGLE_USER            # requerido para JPype/JVM en proceso (I5)
                 single_user_name: ${var.service_principal}
           tasks:
+            # Primera task (patrón alineado con vera_framework): crea/siembra de
+            # forma idempotente el plano de control. No usa Oracle → sin libraries.
+            - task_key: crear_objetos
+              job_cluster_key: midas_cluster
+              notebook_task:
+                notebook_path: ./notebooks/00_creacion_objetos_midas.py
+                base_parameters:
+                  catalog_destino: ${var.catalog_destino}
+                  schema_destino: ${var.schema_destino}
             - task_key: extraer_datos_oracle
+              depends_on:
+                - task_key: crear_objetos
               job_cluster_key: midas_cluster
               # Solo esta task necesita el driver JDBC (JayDeBeApi + JPype1).
               libraries:
@@ -463,3 +531,34 @@ targets:
                   - "${var.catalog_destino}"
                   - "--schema"
                   - "${var.schema_destino}"
+
+        # Job de diagnóstico on-demand (patrón alineado con vera_framework).
+        # Solo en uat/pdn, donde la red hacia Oracle es el riesgo (en dllo no
+        # es necesario). Sin schedule: se lanza a mano para aislar fallos de
+        # red/credenciales/listener antes de correr la cadena.
+        midas_check_conectividad:
+          name: midas_check_conectividad_${bundle.target}
+          permissions:
+            - level: CAN_MANAGE
+              user_name: frans.taboada@epm.com.co
+          job_clusters:
+            - job_cluster_key: midas_cluster
+              new_cluster:
+                spark_version: ${var.spark_version}       # 16.4 = JDK 17 (I4)
+                node_type_id: ${var.node_type_id}
+                num_workers: ${var.num_workers}
+                data_security_mode: SINGLE_USER            # requerido para JPype/JVM (I5)
+                single_user_name: ${var.service_principal}
+          tasks:
+            - task_key: check
+              job_cluster_key: midas_cluster
+              notebook_task:
+                notebook_path: ./notebooks/check_conectividad_oracle.py
+                base_parameters:
+                  oracle_host: ${var.oracle_host}
+                  oracle_port: ${var.oracle_port}
+                  oracle_service: ${var.oracle_service}
+                  oracle_user: ${var.oracle_user}
+                  oracle_secret_scope: ${var.oracle_secret_scope}
+                  oracle_password_key: ${var.oracle_password_key}
+                  oracle_jdbc_jar_path: ${var.oracle_jdbc_jar_path}

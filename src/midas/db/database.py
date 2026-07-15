@@ -48,7 +48,10 @@ def _dsn_parts():
 
 def _jdbc_url():
     host, port, service = _dsn_parts()
-    return f"jdbc:oracle:thin:@//{host}:{port}/{service}"
+    # alineado con vera_framework: mismo formato de URL JDBC entre bundles
+    # (jdbc:oracle:thin:@host:puerto/servicio, sin '//'). Ver
+    # vera_framework/src/vera_framework/oracle_extractor.py::_fetch_jdbc.
+    return f"jdbc:oracle:thin:@{host}:{port}/{service}"
 
 
 def _diagnostico_red():
@@ -152,9 +155,17 @@ def _to_python(value, scale):
             d = Decimal(s)
         except InvalidOperation:
             return float(s)
+        # ⚠️ DIVERGENCIA DELIBERADA respecto a vera_framework (NO "corregir"):
+        # Vera convierte NUMBER con escala > 0 a Decimal porque su BronzeLoader
+        # castea después al schema exacto del destino (DECIMAL(20,6), etc.).
+        # Midas NO puede copiar eso: escribe Parquet vía pandas y las tablas
+        # Bronze existentes se poblaron con los tipos que producía el driver
+        # Python previo (int para escala 0, float para escala > 0). Cambiar a
+        # Decimal alteraría el schema de los Parquet y rompería el insertInto
+        # contra las Bronze existentes (invariante I10). Se mantiene int/float.
         if scale == 0 and d == d.to_integral_value():
-            return int(d)                      # NUMBER(p,0) → int (como el driver previo)
-        return float(d)                        # NUMBER con decimales → float
+            return int(d)                      # NUMBER(p,0) → int (paridad con el driver previo)
+        return float(d)                        # NUMBER con decimales → float (NO Decimal, ver arriba)
 
     if "Timestamp" in cls or "java.sql.Date" in cls or "TIMESTAMP" in cls:
         return pd.to_datetime(str(value)).to_pydatetime()
