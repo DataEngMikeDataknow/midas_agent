@@ -141,9 +141,45 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
 - **Plano de control con `job_name`**: `midas_control_cargas` y
   `midas_log_cargas` son COMPARTIDAS con otros jobs (p. ej. `vera_framework`).
   Todos los runners de este bundle usan `job_name = "midas_bronze"` para
-  discriminar sus filas. El DDL + bootstrap idempotente de las 8 filas lo hace
-  la primera task del job, `crear_objetos`
-  (`notebooks/00_creacion_objetos_midas.py`).
+  discriminar sus filas. El DDL + bootstrap idempotente lo hace la primera task
+  del job, `crear_objetos` (`notebooks/00_creacion_objetos_midas.py`).
+
+## Tablas de la cadena (control) — Caso 1 + Caso 2
+
+El seed de `crear_objetos` siembra **13 cargas** (`job_name = 'midas_bronze'`):
+
+| Grupo | tipo_carga | Tablas |
+|---|---|---|
+| **Dimensión** (1) | `QUERY_FULL_OVERWRITE` | `midas_dim_estado_corte_facturable_bronze` |
+| **Cadena Caso 1** | `FULL_CHAINED` | las 8 `midas_*_bronze` de órdenes/básicos/lecturas/consumos/crítica/comentarios/cuentas/cargos |
+| **Promociones Caso 2** | `FULL_CHAINED` | `midas_datos_detalle_solicitudes_bronze` (A1), `midas_datos_servicios_contrato_bronze` (A2), `midas_datos_consumos_contrato_bronze` (A3), `midas_datos_investigacion_consumo_bronze` (A4) |
+
+### Por qué UNA sola dimensión (y no un catálogo por código)
+Siguiendo el patrón del Caso 1, los códigos categóricos se resuelven **inline** en las queries
+de extracción con subconsultas correlacionadas
+(`(SELECT escocodi||'-'||escodesc FROM estacort WHERE escocodi = sesuesco) AS estado_corte`),
+así que **las Bronze de datos ya traen código y descripción juntos**. Materializar catálogos
+(`tipo_consumo`, `observacion_lectura`, `calificacion`, `concepto`, `causal_cargo`,
+`metodo_calculo`, `tipo_solicitud`, `estado_investigacion`) sería redundante y habría que
+operarlos para siempre.
+
+**La excepción es `estado_corte_facturable`**: no es una etiqueta, es una **matriz de decisión**
+(S/N por estado × servicio, desde `confesco`). El agente la consulta como **regla** y necesita
+las combinaciones **completas**, no solo las presentes en los datos del día; además negocio
+pidió que fuera dinámica.
+
+> **Upgrade path** (si el científico de datos necesitara enumerar catálogos completos para
+> prompts o tools): **una** tabla genérica `midas_dim_catalogos_bronze (catalogo, codigo,
+> descripcion)` con `UNION ALL` — no volver a nueve tablas.
+
+- El análisis del Caso 2 es **a nivel de contrato**: A2/A3 traen todos los SS del contrato y
+  sus consumos.
+- **`midas_parametros`** (creada por `crear_objetos`) saca los códigos "mágicos"
+  (`activity_caso1=1019`, `activity_caso2=993`, `task_type=883`, `metodo=4`, ventanas…) del
+  código. La separación de casos (1019 vs 993) se hace **aguas abajo** (Silver), nunca en la
+  query de entrada de Oracle.
+- Semántica de negocio del Caso 2: ver `docs/semantica_campos_caso2.md`.
+- Validación read-only con datos reales en dllo: `notebooks/30_validacion_midas.py`.
 
 ---
 
@@ -172,8 +208,12 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
 databricks.yml                          Definición del bundle (targets dllo/uat/pdn, jobs por target)
 pipeline/deploy-bundle.yml              CI/CD Azure DevOps (desarrollo→dllo, pruebas→uat, produccion→pdn)
 docs/adr/0001-bundles-separados-vera-midas.md   ADR: por qué bundles separados
+docs/semantica_campos_caso2.md          Semántica de negocio del Caso 2 (cerrado en reunión + PENDIENTE-NEG)
 notebooks/
-  00_creacion_objetos_midas.py          Task crear_objetos: DDL + bootstrap del control (job_name)
+  00_creacion_objetos_midas.py          Task crear_objetos: DDL + control (20 cargas) + midas_parametros
+  10_extraer_datos_oracle.py            Task extraer_datos_oracle (%pip + main_data_fetcher)
+  30_validacion_midas.py                Validación read-only Caso 2 (F5/F2/F4) en dllo
+  90_exploracion_campos_caso2.py        Exploración Caso 2 (read-only, no es del job)
   check_conectividad_oracle.py          Job midas_check_conectividad (preflight Oracle, uat/pdn)
   validacion_control_cargas.py          Notebook de validación del plano de control
 src/midas/

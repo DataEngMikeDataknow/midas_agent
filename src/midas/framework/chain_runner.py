@@ -43,16 +43,32 @@ PASO_COMENTARIOS         = ("midas_datos_cometarios_ordenes_bronze",     "QUERY_
 PASO_CUENTAS_COBRO       = ("midas_datos_cuentas_cobro_bronze",          "QUERY_CUENTAS_COBRO")
 PASO_DETALLE_CARGOS      = ("midas_datos_detalle_cargos_bronze",         "QUERY_DETALLE_CARGOS")
 
+# ─── Caso 2: ÚNICA dimensión materializada (matriz de decisión facturable) ───
+# Los demás catálogos NO se materializan: se resuelven inline en las queries (patrón Caso 1).
+PASO_DIM_ESTADO_CORTE = ("midas_dim_estado_corte_facturable_bronze", "QUERY_DIM_ESTADO_CORTE_FACTURABLE")
+
+# ─── Caso 2: promociones a la cadena ───
+PASO_SOLICITUDES        = ("midas_datos_detalle_solicitudes_bronze",  "QUERY_DETALLE_SOLICITUDES")
+PASO_SERVICIOS_CONTRATO = ("midas_datos_servicios_contrato_bronze",   "QUERY_SERVICIOS_CONTRATO")
+PASO_CONSUMOS_CONTRATO  = ("midas_datos_consumos_contrato_bronze",    "QUERY_CONSUMOS_CONTRATO")
+PASO_INVESTIGACION      = ("midas_datos_investigacion_consumo_bronze", "QUERY_INVESTIGACION_CONSUMO")
+
 
 def _ejecutar_paso(
     control: ControlCargasClient,
     tabla_destino: str,
     query_key: str,
     fn: Callable[[], pd.DataFrame],
+    abortar_en_fallo: bool = True,
 ) -> Tuple[Optional[pd.DataFrame], int]:
     """
     Ejecuta un paso envuelto en control: log INICIADO -> fn() -> log EXITOSO/FALLIDO.
-    Si falla, re-lanza para abortar la cadena (downstream depende del resultado).
+
+    abortar_en_fallo=True  (default): re-lanza para abortar la cadena. Es el modo
+        de la cadena principal, donde cada paso alimenta al siguiente.
+    abortar_en_fallo=False: registra el fallo y continua (para pasos SIN downstream,
+        como las dimensiones y las promociones del Caso 2: su fallo no debe tumbar
+        la cadena probada del Caso 1).
     """
     id_carga = control.get_id_carga(tabla_destino)
     fecha_inicio = datetime.utcnow()
@@ -89,7 +105,10 @@ def _ejecutar_paso(
             fecha_inicio=fecha_inicio,
             mensaje_error=str(exc),
         )
-        raise
+        if abortar_en_fallo:
+            raise
+        log.warning("[%s] paso no critico: se registra el fallo y se continua", tabla_destino)
+        return None, 0
 
 
 def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) -> None:
@@ -99,6 +118,16 @@ def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) 
     """
     log.info("== Inicio cadena extraccion (run_id=%s) ==", control.run_id)
 
+    # ── Caso 2: dimensión de facturable (matriz de decisión, full overwrite) ──
+    # No aborta la cadena si falla (p. ej. falta un GRANT en confesco/servicio): se
+    # registra el fallo y se continua con la cadena principal.
+    _ejecutar_paso(
+        control, *PASO_DIM_ESTADO_CORTE,
+        fn=processing_module.run_query_dim_estado_corte_facturable,
+        abortar_en_fallo=False,
+    )
+
+    # ── Cadena principal (Caso 1, comportamiento intacto: aborta al primer fallo) ──
     df_ord, _ = _ejecutar_paso(
         control, *PASO_ORDENES_PENDIENTES,
         fn=lambda: processing_module.run_query_ordenes_pendientes(),
@@ -130,6 +159,32 @@ def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) 
     _ejecutar_paso(
         control, *PASO_DETALLE_CARGOS,
         fn=lambda: processing_module.run_query_detalle_cargos(df_cuentas),
+    )
+
+    # ── Caso 2: promociones (no abortan la cadena principal) ──
+    # A1: solicitudes (padre = datos_basicos, join servicio_suscrito).
+    _ejecutar_paso(
+        control, *PASO_SOLICITUDES,
+        fn=lambda: processing_module.run_query_detalle_solicitudes(df_basicos),
+        abortar_en_fallo=False,
+    )
+    # A2: roster de SS del contrato (padre = datos_basicos, join contrato).
+    df_serv_contrato, _ = _ejecutar_paso(
+        control, *PASO_SERVICIOS_CONTRATO,
+        fn=lambda: processing_module.run_query_servicios_contrato(df_basicos),
+        abortar_en_fallo=False,
+    )
+    # A3: consumos de cada SS del roster (padre = servicios_contrato).
+    _ejecutar_paso(
+        control, *PASO_CONSUMOS_CONTRATO,
+        fn=lambda: processing_module.run_query_consumos_contrato(df_serv_contrato),
+        abortar_en_fallo=False,
+    )
+    # A4: consumo en investigacion (padre = datos_basicos, join servicio_suscrito).
+    _ejecutar_paso(
+        control, *PASO_INVESTIGACION,
+        fn=lambda: processing_module.run_query_investigacion_consumo(df_basicos),
+        abortar_en_fallo=False,
     )
 
     log.info("== Cadena extraccion OK ==")

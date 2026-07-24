@@ -416,3 +416,118 @@ WHERE   mm.product_id = :p_servicio_suscrito
     AND a.subscriber_id = r.subscriber_id (+)
 order by 1 desc
 """
+
+# =============================================================================
+# CASO 2 — Dimensiones de referencia (catalogos) y promociones a Bronze.
+# NUEVAS constantes (no se modifica ninguna query existente). Los catalogos se
+# cargan a diario con full overwrite (tipo_carga QUERY_FULL_OVERWRITE). Los
+# nombres de tablas/columnas se derivan de las subqueries de las queries de la
+# cadena (misma fuente = cero drift) o del diccionario FLEX.
+# =============================================================================
+
+# --- Dimensiones de catalogo (sin binds) -------------------------------------
+
+# Facturable = relacion (estado_corte × servicio) en confesco.coecfact (S/N).
+# Query entregado por negocio (Jonatan), generalizado sin filtros de un estado.
+QUERY_DIM_ESTADO_CORTE_FACTURABLE = """
+SELECT escocodi, escodesc, coecfact, coecserv, servdesc
+FROM estacort, confesco, servicio
+WHERE escocodi = coeccodi
+  AND coecserv = servcodi
+"""
+
+# NOTA (v3, racionalización de dimensiones): NO existen dimensiones de catálogo para
+# tipo_consumo, observacion_lectura, calificacion, concepto, causal_cargo, metodo_calculo,
+# tipo_solicitud ni estado_investigacion. Siguiendo el patrón del Caso 1, esos códigos se
+# resuelven INLINE en las queries de extracción (subconsultas correlacionadas
+# `codigo||'-'||descripcion`), por lo que las Bronze de datos ya traen código y descripción
+# juntos. La única dimensión materializada es la matriz de facturable (arriba), porque es una
+# MATRIZ DE DECISIÓN (S/N por estado × servicio) que el agente consulta como regla y necesita
+# COMPLETA, no solo las combinaciones presentes en los datos del día.
+# Upgrade path (si el DS necesitara enumerar catálogos completos): UNA tabla genérica
+# `midas_dim_catalogos_bronze (catalogo, codigo, descripcion)` con UNION ALL — no volver a 9 tablas.
+
+# --- Promociones a la cadena (con binds) -------------------------------------
+
+# A2 — Todos los servicios suscritos de un contrato (multi-servicio).
+# ESPEJO de QUERY_DATOS_BASICOS (mismos joins/catálogos/alias, estilo código-
+# descripción): en vez de filtrar por la instalación de la orden (:address_id),
+# filtra por el contrato (:p_contrato) para traer TODOS los SS del contrato con
+# el mismo schema que datos_basicos. Trae también los retirados (con fechas);
+# la regla de "SS vigente" se aplica en Silver (PENDIENTE-NEG).
+QUERY_SERVICIOS_CONTRATO = """
+--servicios_contrato (espejo de datos_basicos_producto, por contrato)
+SELECT
+    sesunuse servicio_suscrito,
+    sesususc contrato,
+    p.address_id instalacion,
+    (SELECT servcodi||'-'||servdesc FROM servicio WHERE servcodi = sesuserv) servicio,
+    to_char(sesufein, 'YYYY-MM-DD') fecha_instalacion,
+    to_char(sesufere, 'YYYY-MM-DD') fecha_retiro,
+    (select * from (select periodicity from pe_per_his_prod where product_id= sesunuse order by created_date desc) where rownum <= 1) periodicidad,
+    (select escocodi||'-'||escodesc from estacort where escocodi = sesuesco) Estado_Corte,
+    (select catecodi||'-'||catedesc from categori where catecodi = sesucate) Categoria,
+    (select sucacodi||'-'||sucadesc from subcateg where sucacate = sesucate and sucacodi = sesusuca) subcategoria,
+    sesucicl as ciclo,
+    (select plsucodi||'-'||plsudesc from plansusc where plsucodi = sesuplfa) Plan_Facturacion,
+    (select plsucodi||'-'||plsudesc from pr_product,plansusc where commercial_plan_id = plsucodi and product_id = sesunuse) plan_facturacion_pr_product,
+    subscriber_name||' '||SUBS_LAST_NAME Nombre_Cliente,
+    cl.IDENTIFICATION identificacion,
+    (select geograp_location_id||'-'||description from ge_geogra_location g where g.geograp_location_id = d.geograp_location_id) Localidad,
+    d.address_parsed direccion,
+    cadastral_id PAGINA,
+    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucosacu > 0) SALDO_PENDIENTE,
+    (select count(1) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) CUENTAS_VENCIDAS,
+    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) SALDO_VENCIDO
+FROM servsusc s, pr_product p, ab_address d, suscripc c, ge_subscriber cl
+WHERE 1=1
+AND sesunuse = product_id
+AND c.susccodi = s.sesususc
+AND p.product_id = s.sesunuse
+AND p.address_id = d.address_id
+AND cl.subscriber_id = c.suscclie
+AND s.sesususc = :p_contrato -- roster del contrato (incluye retirados; vigencia en Silver)
+"""
+
+# A3 — Consumos de un servicio suscrito (cualquiera del contrato), ultimos 6
+# meses. Query NUEVA sobre conssesu parametrizada SOLO por SS (validada en Fase 1):
+# la QUERY_DATOS_CONSUMOS existente exige tambien el periodo, que no tenemos para
+# los SS hermanos del contrato. La ventana (6 meses) es un valor que en el futuro
+# debe leerse de midas_parametros (ventana_meses_historia).
+QUERY_CONSUMOS_CONTRATO = """
+SELECT
+    cosssesu servicio_suscrito,
+    cosspefa id_periodo_facturacion,
+    cosspecs id_periodo_consumo,
+    cosscoca consumo,
+    (SELECT mecccodi||'-'||meccdesc FROM mecacons WHERE mecccodi = cossmecc) metodo_calculo,
+    (SELECT tconcodi||'-'||tcondesc FROM tipocons t WHERE t.tconcodi = cosstcon) tipo_consumo,
+    (SELECT cavccodi||'-'||cavcdesc FROM calivaco WHERE cavccodi = cosscavc) calificacion,
+    to_char(cossfere, 'YYYY-MM-DD') fecha_registro
+FROM conssesu
+WHERE cosssesu = :p_servicio_suscrito
+  AND cossfere >= ADD_MONTHS(SYSDATE, -6)
+ORDER BY cosspefa DESC
+"""
+
+# A4 — Consumo en investigacion (PE_INVEST_CONSUM), ultimos 6 meses.
+# Se trae el estado crudo (invest_cons_state_id): NO se filtra por estado en Bronze.
+# Semantica (resuelta inline en estado_investigacion_desc; cerrada en reunion 2026-07-16):
+#   1 = EN INVESTIGACION (abierta) · 2 = IMPUTABLE AL CLIENTE · 3 = IMPUTABLE A LA EMPRESA.
+# El estado DEFINE si se le cobra o no al usuario; 2/3 son resoluciones (no "cerrada").
+# El filtro por estado (p. ej. "investigacion abierta" = 1) se hace en Silver.
+QUERY_INVESTIGACION_CONSUMO = """
+SELECT
+    i.product_id servicio_suscrito,
+    (SELECT tconcodi||'-'||tcondesc FROM tipocons t WHERE t.tconcodi = i.consumption_type) tipo_consumo,
+    i.consumption_period id_periodo_consumo,
+    i.investigate_request solicitud_investigacion,
+    i.invest_cons_state_id estado_investigacion,
+    (SELECT s.invest_cons_state_id||'-'||s.description FROM pe_invest_cons_state s
+      WHERE s.invest_cons_state_id = i.invest_cons_state_id) estado_investigacion_desc,
+    to_char(i.register_date, 'YYYY-MM-DD HH24:MI:SS') fecha_registro
+FROM pe_invest_consum i
+WHERE i.product_id = :p_servicio_suscrito
+  AND i.register_date >= ADD_MONTHS(SYSDATE, -6)
+ORDER BY i.register_date DESC
+"""

@@ -3,8 +3,10 @@
 # MAGIC
 # MAGIC Primera task del job `midas_bronze_silver`. Crea de forma **idempotente**
 # MAGIC (`CREATE TABLE IF NOT EXISTS`) las tablas del plano de control
-# MAGIC (`midas_control_cargas`, `midas_log_cargas`) y **siembra** las 8 filas
-# MAGIC `FULL_CHAINED` de la cadena Midas con `job_name = 'midas_bronze'`.
+# MAGIC (`midas_control_cargas`, `midas_log_cargas`), la tabla de parámetros
+# MAGIC (`midas_parametros`) y **siembra** el control con `job_name = 'midas_bronze'`:
+# MAGIC 1 dimensión `QUERY_FULL_OVERWRITE` (matriz facturable) + 8 pasos `FULL_CHAINED`
+# MAGIC de la cadena (Caso 1) + 4 promociones `FULL_CHAINED` del Caso 2 (13 filas en total).
 # MAGIC
 # MAGIC Reemplaza al antiguo seed manual en SQL (un único mecanismo
 # MAGIC canónico evita drift). Patrón **alineado con vera_framework**
@@ -110,31 +112,61 @@ else:
     print("job_name ya presente en midas_control_cargas (no se requiere ALTER)")
 
 # COMMAND ----------
-# ───── Bootstrap del control: 8 filas FULL_CHAINED de la cadena Midas ─────
-# MERGE por (catalog_destino, schema_destino, tabla_destino). Las columnas que
-# el framework GESTIONA (tipo_carga, query_key, activa, orden_ejecucion,
-# columna_join, job_name) se re-imponen en WHEN MATCHED (config canónica);
-# `comentarios` es de edición manual: solo se toca en el INSERT, nunca se pisa.
+# ───── Bootstrap del control (Caso 1 + Caso 2) ─────
+# Un solo seed metadata-driven. tipo_carga:
+#   QUERY_FULL_OVERWRITE = dimensiones de catálogo (se recargan completas a diario).
+#   FULL_CHAINED         = cadena encadenada (Caso 1) + promociones (Caso 2).
+# MERGE por (catalog, schema, tabla_destino). Las columnas GESTIONADAS se re-imponen
+# en WHEN MATCHED; `comentarios` (edición manual) solo se toca en el INSERT.
+# SEED: (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
+SEED = [
+    # ── ÚNICA dimensión materializada (Caso 2) — orden 1 ──
+    # Los demás catálogos NO se materializan: se resuelven inline en las queries
+    # (patrón del Caso 1). Esta es una MATRIZ DE DECISIÓN (S/N por estado × servicio)
+    # que el agente consulta como regla y necesita COMPLETA.
+    ("midas_dim_estado_corte_facturable_bronze", "QUERY_DIM_ESTADO_CORTE_FACTURABLE", "QUERY_FULL_OVERWRITE", 1, None),
+    # ── Cadena encadenada (Caso 1) — orden 11..18 ──
+    ("midas_ordenes_calidad_pendientes_bronze",  "QUERY_ORDENES_PENDIENTES",    "FULL_CHAINED", 11, None),
+    ("midas_datos_basicos_producto_bronze",      "QUERY_DATOS_BASICOS",         "FULL_CHAINED", 12, "instalacion"),
+    ("midas_datos_lecturas_producto_bronze",     "QUERY_DATOS_LECTURA",         "FULL_CHAINED", 13, "servicio_suscrito"),
+    ("midas_datos_consumos_producto_bronze",     "QUERY_DATOS_CONSUMOS",        "FULL_CHAINED", 14, "servicio_suscrito"),
+    ("midas_datos_ordenes_previa_critica_bronze","QUERY_ORDENES_CRITICA_PEVIA", "FULL_CHAINED", 15, "servicio_suscrito"),
+    ("midas_datos_cometarios_ordenes_bronze",    "QUERY_COMENTARIOS_ORDENES",   "FULL_CHAINED", 16, "id_orden"),
+    ("midas_datos_cuentas_cobro_bronze",         "QUERY_CUENTAS_COBRO",         "FULL_CHAINED", 17, "servicio_suscrito"),
+    ("midas_datos_detalle_cargos_bronze",        "QUERY_DETALLE_CARGOS",        "FULL_CHAINED", 18, "id_cuenta_cobro"),
+    # ── Promociones (Caso 2) — orden 21..24 ──
+    ("midas_datos_detalle_solicitudes_bronze",   "QUERY_DETALLE_SOLICITUDES",  "FULL_CHAINED", 21, "servicio_suscrito"),
+    ("midas_datos_servicios_contrato_bronze",    "QUERY_SERVICIOS_CONTRATO",   "FULL_CHAINED", 22, "contrato"),
+    ("midas_datos_consumos_contrato_bronze",     "QUERY_CONSUMOS_CONTRATO",    "FULL_CHAINED", 23, "servicio_suscrito"),
+    ("midas_datos_investigacion_consumo_bronze", "QUERY_INVESTIGACION_CONSUMO","FULL_CHAINED", 24, "servicio_suscrito"),
+]
+N_ESPERADO = len(SEED)  # fuente única de verdad para la verificación (no cablear dos veces)
+
+
+def _sql_val(x):
+    if x is None:
+        return "NULL"
+    if isinstance(x, int):
+        return str(x)
+    return "'" + str(x).replace("'", "''") + "'"
+
+
+_rows = ",\n        ".join(
+    f"({_sql_val(t)}, {_sql_val(qk)}, {_sql_val(tc)}, {_sql_val(o)}, {_sql_val(cj)})"
+    for (t, qk, tc, o, cj) in SEED
+)
 spark.sql(f"""
     MERGE INTO {CONTROL} AS dest
     USING (
       SELECT * FROM VALUES
-        -- (tabla_destino, query_key, orden_ejecucion, columna_join)
-        ('midas_ordenes_calidad_pendientes_bronze',  'QUERY_ORDENES_PENDIENTES',    1, NULL),
-        ('midas_datos_basicos_producto_bronze',      'QUERY_DATOS_BASICOS',         2, 'instalacion'),
-        ('midas_datos_lecturas_producto_bronze',     'QUERY_DATOS_LECTURA',         3, 'servicio_suscrito'),
-        ('midas_datos_consumos_producto_bronze',     'QUERY_DATOS_CONSUMOS',        4, 'servicio_suscrito'),
-        ('midas_datos_ordenes_previa_critica_bronze','QUERY_ORDENES_CRITICA_PEVIA', 5, 'servicio_suscrito'),
-        ('midas_datos_cometarios_ordenes_bronze',    'QUERY_COMENTARIOS_ORDENES',   6, 'id_orden'),
-        ('midas_datos_cuentas_cobro_bronze',         'QUERY_CUENTAS_COBRO',         7, 'servicio_suscrito'),
-        ('midas_datos_detalle_cargos_bronze',        'QUERY_DETALLE_CARGOS',        8, 'id_cuenta_cobro')
-      AS t (tabla_destino, query_key, orden_ejecucion, columna_join)
+        {_rows}
+      AS t (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
     ) AS src
     ON  dest.catalog_destino = '{CATALOG}'
     AND dest.schema_destino  = '{SCHEMA}'
     AND dest.tabla_destino   = src.tabla_destino
     WHEN MATCHED THEN UPDATE SET
-        dest.tipo_carga         = 'FULL_CHAINED',
+        dest.tipo_carga         = src.tipo_carga,
         dest.query_key          = src.query_key,
         dest.activa             = true,
         dest.orden_ejecucion    = src.orden_ejecucion,
@@ -147,17 +179,17 @@ spark.sql(f"""
         columna_join, comentarios
     ) VALUES (
         '{CATALOG}', '{SCHEMA}', src.tabla_destino,
-        'FULL_CHAINED', src.query_key, '{JOB_NAME}', true, src.orden_ejecucion,
-        src.columna_join, 'Cadena Midas 8 tablas - Etapa 2'
+        src.tipo_carga, src.query_key, '{JOB_NAME}', true, src.orden_ejecucion,
+        src.columna_join, 'Bronze Caso 1 + Caso 2'
     )
 """)
-print("OK  bootstrap MERGE de las 8 filas FULL_CHAINED")
+print(f"OK  bootstrap MERGE del control ({N_ESPERADO} filas: 1 dim + 8 cadena + 4 promociones)")
 
 # COMMAND ----------
 # ───── Dependencias query_padre_id (informativo en FULL_CHAINED) ─────
 # Cualificado con catálogo/schema y filtrado por job_name (tabla compartida).
 _PADRES = [
-    # (tabla_hija, tabla_padre)
+    # (tabla_hija, tabla_padre)  — las dimensiones no tienen padre
     ("midas_datos_basicos_producto_bronze",       "midas_ordenes_calidad_pendientes_bronze"),
     ("midas_datos_lecturas_producto_bronze",      "midas_datos_basicos_producto_bronze"),
     ("midas_datos_cuentas_cobro_bronze",          "midas_datos_basicos_producto_bronze"),
@@ -165,6 +197,11 @@ _PADRES = [
     ("midas_datos_ordenes_previa_critica_bronze", "midas_datos_lecturas_producto_bronze"),
     ("midas_datos_cometarios_ordenes_bronze",     "midas_datos_ordenes_previa_critica_bronze"),
     ("midas_datos_detalle_cargos_bronze",         "midas_datos_cuentas_cobro_bronze"),
+    # ── Promociones Caso 2 ──
+    ("midas_datos_detalle_solicitudes_bronze",    "midas_datos_basicos_producto_bronze"),
+    ("midas_datos_servicios_contrato_bronze",     "midas_datos_basicos_producto_bronze"),
+    ("midas_datos_consumos_contrato_bronze",      "midas_datos_servicios_contrato_bronze"),
+    ("midas_datos_investigacion_consumo_bronze",  "midas_datos_basicos_producto_bronze"),
 ]
 for hija, padre in _PADRES:
     spark.sql(f"""
@@ -191,11 +228,66 @@ activas = spark.sql(f"""
 """)
 n = activas.count()
 display(activas)
-if n != 8:
+if n != N_ESPERADO:
     raise RuntimeError(
-        f"Se esperaban 8 filas activas con job_name='{JOB_NAME}' y hay {n}. "
-        f"El job no cargaría la cadena completa."
+        f"Se esperaban {N_ESPERADO} filas activas con job_name='{JOB_NAME}' y hay {n}. "
+        f"El job no cargaría todas las tablas del seed."
     )
 
 # COMMAND ----------
-print("\n=== OBJETOS DE CONTROL MIDAS CREADOS / VALIDADOS (8 cargas activas) ===")
+# ───── Tabla de PARÁMETROS (deuda del Caso 1: sacar los códigos "mágicos" del código) ─────
+# Fuente única de los códigos que hoy viven cableados en queries/prompt. NO la consumen aún
+# las queries existentes (eso es un refactor aparte); se siembra para que Silver / el registro
+# de agentes resuelva la separación de casos (activity_caso1=1019 vs activity_caso2=993) por
+# datos y no por código quemado.
+PARAMETROS = f"{CATALOG}.{SCHEMA}.midas_parametros"
+crear_tabla(
+    f"""
+    CREATE TABLE IF NOT EXISTS {PARAMETROS} (
+        dominio            STRING  NOT NULL,
+        clave              STRING  NOT NULL,
+        valor              STRING,
+        tipo_dato          STRING,
+        descripcion        STRING,
+        activo             BOOLEAN,
+        fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+    )
+    USING DELTA
+    TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+    """,
+    PARAMETROS,
+    "Parámetros del framework Midas: códigos de negocio antes cableados en queries/prompt.",
+)
+
+# Seed insert-if-missing (no pisa ediciones manuales de valor/activo).
+_PARAMS = [
+    ("orden",      "task_type_ordenes_calidad",   "883",     "INT", "task_type_id de la query de entrada (ordenes de calidad pendientes)"),
+    ("orden",      "activity_caso1",              "1019",    "INT", "activity_id del Caso 1 (diferencia acueducto/alcantarillado)"),
+    ("orden",      "activity_caso2",              "993",     "INT", "activity_id del Caso 2: '993 - VARIACION SIGNIFICATIVA CONTRA EL MES ANTERIOR'"),
+    ("orden",      "activity_critica",            "102010",  "INT", "activity_id de critica de consumo"),
+    ("orden",      "activity_decision_analista",  "7400027", "INT", "activity_id de decision de analista"),
+    ("orden",      "estado_orden_anulada",        "12",      "INT", "order_status_id de orden anulada (excluida en la entrada)"),
+    ("comentario", "tipo_comentario",             "4002",    "INT", "comment_type_id de comentario de orden"),
+    ("consumo",    "metodo_calculo_facturado",    "4",       "INT", "cossmecc que representa consumo facturado"),
+    ("ventana",    "ventana_meses_historia",      "6",       "INT", "meses de historia para consumos/investigacion"),
+    ("ventana",    "ventana_meses_observaciones", "3",       "INT", "meses de historia para observaciones/critica"),
+]
+_prows = ",\n        ".join(
+    f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)})"
+    for (d, k, v, td, desc) in _PARAMS
+)
+spark.sql(f"""
+    MERGE INTO {PARAMETROS} AS dest
+    USING (
+      SELECT * FROM VALUES
+        {_prows}
+      AS t (dominio, clave, valor, tipo_dato, descripcion)
+    ) AS src
+    ON dest.dominio = src.dominio AND dest.clave = src.clave
+    WHEN NOT MATCHED THEN INSERT (dominio, clave, valor, tipo_dato, descripcion, activo)
+    VALUES (src.dominio, src.clave, src.valor, src.tipo_dato, src.descripcion, true)
+""")
+print(f"OK  midas_parametros sembrada ({len(_PARAMS)} parámetros, insert-if-missing)")
+
+# COMMAND ----------
+print(f"\n=== OBJETOS DE CONTROL MIDAS CREADOS / VALIDADOS ({N_ESPERADO} cargas activas + parámetros) ===")

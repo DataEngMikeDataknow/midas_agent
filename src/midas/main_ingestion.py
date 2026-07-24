@@ -30,48 +30,20 @@ _QUERY_KEY = {
     "midas_datos_cometarios_ordenes_bronze":     "QUERY_COMENTARIOS_ORDENES",
     "midas_datos_cuentas_cobro_bronze":          "QUERY_CUENTAS_COBRO",
     "midas_datos_detalle_cargos_bronze":         "QUERY_DETALLE_CARGOS",
+    # ─── Caso 2: dimensiones de referencia ───
+    "midas_dim_estado_corte_facturable_bronze":  "QUERY_DIM_ESTADO_CORTE_FACTURABLE",
+    # ─── Caso 2: promociones ───
+    "midas_datos_detalle_solicitudes_bronze":    "QUERY_DETALLE_SOLICITUDES",
+    "midas_datos_servicios_contrato_bronze":     "QUERY_SERVICIOS_CONTRATO",
+    "midas_datos_consumos_contrato_bronze":      "QUERY_CONSUMOS_CONTRATO",
+    "midas_datos_investigacion_consumo_bronze":  "QUERY_INVESTIGACION_CONSUMO",
 }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Midas Ingestion Runner")
-    parser.add_argument("--source_catalog", required=True)
-    parser.add_argument("--source_schema", required=True)
-    parser.add_argument("--source_volume", required=True)
-    parser.add_argument("--source_base_path", required=True)
-    parser.add_argument("--destination_catalog", required=True)
-    parser.add_argument("--destination_schema", required=True)
-    # ─── Etapa 2: framework de control de cargas ───
-    parser.add_argument("--control_catalog", required=True)
-    parser.add_argument("--control_schema", required=True)
-    parser.add_argument("--job_name", default="midas_bronze",
-                        help="Discriminador del plano de control compartido (midas_control_cargas)")
-    parser.add_argument("--run_id", default=None,
-                        help="UUID de la corrida. Idealmente el mismo de la extraccion.")
-
-    args = parser.parse_args()
-
-    spark = SparkSession.builder.getOrCreate()
-    ingestor = DataIngestor(spark)
-
-    try:
-        usuario = spark.sql("SELECT current_user() AS u").collect()[0]["u"]
-    except Exception:
-        usuario = "midas_framework"
-
-    control = ControlCargasClient(
-        spark=spark,
-        catalog=args.control_catalog,
-        schema=args.control_schema,
-        run_id=args.run_id,
-        usuario_ejecutor=usuario,
-        job_name=args.job_name,
-    )
-    log.info("Control de cargas activo. run_id=%s", control.run_id)
-
-    source_volume_path = f"dbfs:/Volumes/{args.source_catalog}/{args.source_schema}/{args.source_volume}/{args.source_base_path}"
-
-    tables_config = [
+def build_tables_config(source_volume_path: str) -> list:
+    """Config de ingesta Parquet -> Bronze. A nivel de módulo para poder testearla.
+    primary_key acepta str (una columna) o list (PK compuesta)."""
+    return [
         {
             "name": "midas_ordenes_calidad_pendientes_bronze",
             "path": f"{source_volume_path}/ordenes_calidad_pendientes.parquet",
@@ -122,8 +94,84 @@ def main():
             "path": f"{source_volume_path}/datos_detalle_cargos.parquet",
             "primary_key": "id_cuenta_cobro",
             "description": "Detalle de cargos."
+        },
+        # ───────────────── Caso 2: dimensiones de referencia ─────────────────
+        {
+            "name": "midas_dim_estado_corte_facturable_bronze",
+            "path": f"{source_volume_path}/dim_estado_corte_facturable.parquet",
+            "primary_key": ["escocodi", "coecserv"],  # facturable = (estado_corte × servicio)
+            "description": "Dimensión: estado de corte facturable (coecfact S/N) por servicio."
+        },
+        # ───────────────── Caso 2: promociones ─────────────────
+        {
+            # Bronze PREEXISTENTE que se ADOPTA (negocio: "se va a usar"). Su schema tiene
+            # nombres en español + servicio_suscrito como 1ª columna; el mapeo posicional lo
+            # hace processing._adaptar_solicitudes_a_bronze (validado en dllo, celda F2).
+            "name": "midas_datos_detalle_solicitudes_bronze",
+            "path": f"{source_volume_path}/datos_detalle_solicitudes.parquet",
+            "primary_key": ["servicio_suscrito", "id_solicitud"],
+            "description": "Solicitudes/paquetes por servicio suscrito (mo_packages)."
+        },
+        {
+            "name": "midas_datos_servicios_contrato_bronze",
+            "path": f"{source_volume_path}/datos_servicios_contrato.parquet",
+            "primary_key": "servicio_suscrito",
+            "description": "Roster: todos los SS del contrato (incluye retirados; vigencia en Silver)."
+        },
+        {
+            "name": "midas_datos_consumos_contrato_bronze",
+            "path": f"{source_volume_path}/datos_consumos_contrato.parquet",
+            "primary_key": "servicio_suscrito",
+            "description": "Consumos (6m) de cada SS del contrato (multi-servicio)."
+        },
+        {
+            "name": "midas_datos_investigacion_consumo_bronze",
+            "path": f"{source_volume_path}/datos_investigacion_consumo.parquet",
+            "primary_key": "servicio_suscrito",
+            "description": "Consumo en investigación (PE_INVEST_CONSUM); estado crudo."
         }
     ]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Midas Ingestion Runner")
+    parser.add_argument("--source_catalog", required=True)
+    parser.add_argument("--source_schema", required=True)
+    parser.add_argument("--source_volume", required=True)
+    parser.add_argument("--source_base_path", required=True)
+    parser.add_argument("--destination_catalog", required=True)
+    parser.add_argument("--destination_schema", required=True)
+    # ─── Etapa 2: framework de control de cargas ───
+    parser.add_argument("--control_catalog", required=True)
+    parser.add_argument("--control_schema", required=True)
+    parser.add_argument("--job_name", default="midas_bronze",
+                        help="Discriminador del plano de control compartido (midas_control_cargas)")
+    parser.add_argument("--run_id", default=None,
+                        help="UUID de la corrida. Idealmente el mismo de la extraccion.")
+
+    args = parser.parse_args()
+
+    spark = SparkSession.builder.getOrCreate()
+    ingestor = DataIngestor(spark)
+
+    try:
+        usuario = spark.sql("SELECT current_user() AS u").collect()[0]["u"]
+    except Exception:
+        usuario = "midas_framework"
+
+    control = ControlCargasClient(
+        spark=spark,
+        catalog=args.control_catalog,
+        schema=args.control_schema,
+        run_id=args.run_id,
+        usuario_ejecutor=usuario,
+        job_name=args.job_name,
+    )
+    log.info("Control de cargas activo. run_id=%s", control.run_id)
+
+    source_volume_path = f"dbfs:/Volumes/{args.source_catalog}/{args.source_schema}/{args.source_volume}/{args.source_base_path}"
+
+    tables_config = build_tables_config(source_volume_path)
 
     # En primera ejecución crea el schema; en cargas diarias es no-op.
     ingestor.ensure_schema_exists(args.destination_catalog, args.destination_schema)

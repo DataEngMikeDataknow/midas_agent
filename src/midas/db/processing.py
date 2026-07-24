@@ -18,6 +18,12 @@ _PARQUET_FILES = {
     "cuentas_cobro":         "datos_cuentas_cobro.parquet",
     "detalle_cargos":        "datos_detalle_cargos.parquet",
     "detalle_solicitudes":   "datos_detalle_solicitudes.parquet",
+    # ─── Caso 2: única dimensión materializada (matriz de decisión facturable) ───
+    "dim_estado_corte_facturable": "dim_estado_corte_facturable.parquet",
+    # ─── Caso 2: promociones a la cadena ───
+    "servicios_contrato":    "datos_servicios_contrato.parquet",
+    "consumos_contrato":     "datos_consumos_contrato.parquet",
+    "investigacion_consumo": "datos_investigacion_consumo.parquet",
 }
 
 def _out(key: str) -> str:
@@ -304,9 +310,13 @@ def run_query_detalle_solicitudes(df_datos_basicos: pd.DataFrame) -> pd.DataFram
     log.info(f"Iterando {len(unique_servicios)} servicios para ejecutar Query detalle solicitudes...")
 
     for servicio_suscrito in unique_servicios:
-        params = {'p_servicio_suscrito': int(servicio_suscrito)}
+        ss = int(servicio_suscrito)
+        params = {'p_servicio_suscrito': ss}
         df_row = db.execute_query(queries.QUERY_DETALLE_SOLICITUDES, params)
         if not df_row.empty:
+            # La query NO devuelve el SS (es el bind): se materializa como columna para
+            # poder atribuir cada solicitud a su servicio suscrito (columna_join del control).
+            df_row.insert(0, 'SERVICIO_SUSCRITO', ss)
             all_results_detalle_solicitudes.append(df_row)
 
     if not all_results_detalle_solicitudes:
@@ -314,6 +324,154 @@ def run_query_detalle_solicitudes(df_datos_basicos: pd.DataFrame) -> pd.DataFram
         return pd.DataFrame()
 
     df_detalle_solicitudes_final = pd.concat(all_results_detalle_solicitudes, ignore_index=True)
+    df_detalle_solicitudes_final = _adaptar_solicitudes_a_bronze(df_detalle_solicitudes_final)
     save_to_parquet(df_detalle_solicitudes_final, _out("detalle_solicitudes"))
     log.info("--- Proceso extracción: [detalle_solicitudes] Completado ---")
     return df_detalle_solicitudes_final
+
+
+# Mapeo al schema de la Bronze EXISTENTE `midas_datos_detalle_solicitudes_bronze`
+# (validado en dllo 21-22 jul 2026, celda F2 de 30_validacion_midas.py). La tabla ya existe con
+# nombres en español y `servicio_suscrito` como primera columna; negocio confirmó que SE USA,
+# así que se ADOPTA (no se recrea). El renombrado va aquí, en la capa Python: NO se modifica
+# el SQL de QUERY_DETALLE_SOLICITUDES. El orden es posicional porque insertInto lo exige.
+_SOLICITUDES_BRONZE_COLS = [
+    ("SERVICIO_SUSCRITO",   "servicio_suscrito"),
+    ("PACKAGE_ID",          "id_solicitud"),
+    ("SUBSCRIBER",          "usuario"),
+    ("PACKAGE_TYPE",        "tipo_solicitud"),
+    ("REQUEST_DATE",        "fecha_solicitud"),
+    ("PACKAGE_STATUS",      "estado_solicitud"),
+    ("ATTENTION_DATE",      "fecha_atencion_solicitud"),
+    ("COMMENT_",            "comentario"),
+    ("RECEPTION_TYPE",      "medio_recepcion"),
+    ("VENDOR",              "analista"),
+    ("ORGANIZAT_AREA_ID",   "area_organizacional"),
+]
+
+
+def _adaptar_solicitudes_a_bronze(df: pd.DataFrame) -> pd.DataFrame:
+    """Renombra y reordena al schema posicional de la Bronze existente de solicitudes."""
+    if df is None or df.empty:
+        return df
+    faltantes = [o for (o, _) in _SOLICITUDES_BRONZE_COLS if o not in df.columns]
+    if faltantes:
+        log.error("Solicitudes: faltan columnas esperadas del query %s. "
+                  "Se deja el DataFrame sin adaptar (revisar QUERY_DETALLE_SOLICITUDES).", faltantes)
+        return df
+    orden_origen = [o for (o, _) in _SOLICITUDES_BRONZE_COLS]
+    df = df[orden_origen].rename(columns=dict(_SOLICITUDES_BRONZE_COLS))
+    return df
+
+
+# =============================================================================
+# CASO 2 — Dimensiones de referencia (catalogos, full overwrite sin iteracion)
+# =============================================================================
+
+def _run_dim(query: str, out_key: str, nombre: str) -> pd.DataFrame:
+    """Extrae un catalogo completo (full overwrite) y lo materializa a Parquet."""
+    log.info(f"--- Iniciando extracción dimensión: [{nombre}] ---")
+    df = db.execute_query(query)
+    if df.empty:
+        log.warning(f"Dimensión [{nombre}] no retornó filas.")
+    save_to_parquet(df, _out(out_key))
+    log.info(f"--- Dimensión [{nombre}] completada ({len(df)} filas) ---")
+    return df
+
+
+def run_query_dim_estado_corte_facturable() -> pd.DataFrame:
+    """Única dimensión materializada: matriz de decisión facturable (estado × servicio).
+    El resto de catálogos se resuelven INLINE en las queries (patrón del Caso 1)."""
+    return _run_dim(queries.QUERY_DIM_ESTADO_CORTE_FACTURABLE,
+                    "dim_estado_corte_facturable", "estado_corte_facturable")
+
+
+# =============================================================================
+# CASO 2 — Promociones: roster del contrato, consumos multi-servicio, investigacion
+# =============================================================================
+
+def run_query_servicios_contrato(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
+    """A2 — Todos los SS del contrato, iterando por los contratos de datos_basicos."""
+    log.info("--- Iniciando proceso extracción: [servicios_contrato] ---")
+    if df_datos_basicos is None or df_datos_basicos.empty:
+        log.warning("No hay datos_basicos para procesar. Saltando servicios_contrato.")
+        return pd.DataFrame()
+    if 'CONTRATO' not in df_datos_basicos.columns:
+        log.error("Columna 'CONTRATO' no encontrada en datos_basicos. Abortando servicios_contrato.")
+        return pd.DataFrame()
+
+    unique_contratos = df_datos_basicos['CONTRATO'].dropna().unique()
+    all_res = []
+    log.info(f"Iterando {len(unique_contratos)} contratos para servicios_contrato...")
+    for contrato in unique_contratos:
+        params = {'p_contrato': int(contrato)}
+        df_row = db.execute_query(queries.QUERY_SERVICIOS_CONTRATO, params)
+        if not df_row.empty:
+            all_res.append(df_row)
+
+    if not all_res:
+        log.warning("servicios_contrato no retornó resultados para ninguna iteración.")
+        return pd.DataFrame()
+
+    df_final = pd.concat(all_res, ignore_index=True)
+    save_to_parquet(df_final, _out("servicios_contrato"))
+    log.info("--- Proceso extracción: [servicios_contrato] Completado ---")
+    return df_final
+
+
+def run_query_consumos_contrato(df_servicios_contrato: pd.DataFrame) -> pd.DataFrame:
+    """A3 — Consumos (6m) de cada SS del roster del contrato."""
+    log.info("--- Iniciando proceso extracción: [consumos_contrato] ---")
+    if df_servicios_contrato is None or df_servicios_contrato.empty:
+        log.warning("No hay servicios_contrato para procesar. Saltando consumos_contrato.")
+        return pd.DataFrame()
+    if 'SERVICIO_SUSCRITO' not in df_servicios_contrato.columns:
+        log.error("Columna 'SERVICIO_SUSCRITO' no encontrada en servicios_contrato. Abortando.")
+        return pd.DataFrame()
+
+    unique_ss = df_servicios_contrato['SERVICIO_SUSCRITO'].dropna().unique()
+    all_res = []
+    log.info(f"Iterando {len(unique_ss)} SS del contrato para consumos_contrato...")
+    for ss in unique_ss:
+        params = {'p_servicio_suscrito': int(ss)}
+        df_row = db.execute_query(queries.QUERY_CONSUMOS_CONTRATO, params)
+        if not df_row.empty:
+            all_res.append(df_row)
+
+    if not all_res:
+        log.warning("consumos_contrato no retornó resultados para ninguna iteración.")
+        return pd.DataFrame()
+
+    df_final = pd.concat(all_res, ignore_index=True)
+    save_to_parquet(df_final, _out("consumos_contrato"))
+    log.info("--- Proceso extracción: [consumos_contrato] Completado ---")
+    return df_final
+
+
+def run_query_investigacion_consumo(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
+    """A4 — Consumo en investigación (PE_INVEST_CONSUM) por SS (estado crudo)."""
+    log.info("--- Iniciando proceso extracción: [investigacion_consumo] ---")
+    if df_datos_basicos is None or df_datos_basicos.empty:
+        log.warning("No hay datos_basicos para procesar. Saltando investigacion_consumo.")
+        return pd.DataFrame()
+    if 'SERVICIO_SUSCRITO' not in df_datos_basicos.columns:
+        log.error("Columna 'SERVICIO_SUSCRITO' no encontrada en datos_basicos. Abortando.")
+        return pd.DataFrame()
+
+    unique_ss = df_datos_basicos['SERVICIO_SUSCRITO'].dropna().unique()
+    all_res = []
+    log.info(f"Iterando {len(unique_ss)} SS para investigacion_consumo...")
+    for ss in unique_ss:
+        params = {'p_servicio_suscrito': int(ss)}
+        df_row = db.execute_query(queries.QUERY_INVESTIGACION_CONSUMO, params)
+        if not df_row.empty:
+            all_res.append(df_row)
+
+    if not all_res:
+        log.warning("investigacion_consumo no retornó resultados para ninguna iteración.")
+        return pd.DataFrame()
+
+    df_final = pd.concat(all_res, ignore_index=True)
+    save_to_parquet(df_final, _out("investigacion_consumo"))
+    log.info("--- Proceso extracción: [investigacion_consumo] Completado ---")
+    return df_final

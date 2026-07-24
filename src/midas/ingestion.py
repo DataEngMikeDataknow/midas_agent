@@ -87,11 +87,15 @@ class DataIngestor:
                         log.error(f"No se pudo añadir comentario a columna '{column_name}'. Error: {e}")
 
             if primary_key:
+                # primary_key puede ser str (una columna) o list/tuple (PK compuesta).
+                pk_cols = list(primary_key) if isinstance(primary_key, (list, tuple)) else [primary_key]
                 try:
-                    self.spark.sql(f"ALTER TABLE {full_table_name} ALTER COLUMN {primary_key} SET NOT NULL")
+                    for pk_col in pk_cols:
+                        self.spark.sql(f"ALTER TABLE {full_table_name} ALTER COLUMN {pk_col} SET NOT NULL")
                     pk_constraint_name = f"pk_{table_name}"
-                    self.spark.sql(f"ALTER TABLE {full_table_name} ADD CONSTRAINT {pk_constraint_name} PRIMARY KEY({primary_key})")
-                    log.info(f"Clave primaria '{primary_key}' añadida a {full_table_name}.")
+                    pk_cols_sql = ", ".join(pk_cols)
+                    self.spark.sql(f"ALTER TABLE {full_table_name} ADD CONSTRAINT {pk_constraint_name} PRIMARY KEY({pk_cols_sql})")
+                    log.info(f"Clave primaria '{pk_cols_sql}' añadida a {full_table_name}.")
                 except Exception as e:
                     log.error(f"No se pudo establecer la clave primaria '{primary_key}'. Error: {e}")
 
