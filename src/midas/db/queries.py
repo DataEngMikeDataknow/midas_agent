@@ -45,7 +45,21 @@ SELECT
     cadastral_id PAGINA,
     (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucosacu > 0) SALDO_PENDIENTE,
     (select count(1) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) CUENTAS_VENCIDAS,
-    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) SALDO_VENCIDO
+    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) SALDO_VENCIDO,
+    -- R1 (v3): la matriz facturable (estado_corte x servicio) se resuelve INLINE. Las dos
+    -- llaves de confesco ya estan en ESTA fila (sesuesco y sesuserv), asi que materializar
+    -- una dimension aparte solo obligaba al agente a un join evitable. Invariante I11.
+    -- Escalar seguro: verificado en Oracle que (coeccodi, coecserv) es UNICA en confesco
+    -- (0 duplicados, 2026-07-29), asi que no puede lanzar ORA-01427.
+    -- NULL = combinacion no parametrizada en confesco. Es informacion valida y NO se
+    -- reemplaza por 'N': "no parametrizado" y "no facturable" son cosas distintas.
+    (select coecfact from confesco
+      where coeccodi = sesuesco
+        and coecserv = sesuserv) estado_corte_facturable,
+    (select coecfact||'-'||decode(coecfact,'S','FACTURABLE','N','NO FACTURABLE','DESCONOCIDO')
+       from confesco
+      where coeccodi = sesuesco
+        and coecserv = sesuserv) estado_corte_facturable_desc
 FROM servsusc s, pr_product p, ab_address d, suscripc c, ge_subscriber cl
 WHERE 1=1
 AND sesunuse = product_id
@@ -135,7 +149,13 @@ SELECT
     (SELECT oblecodi||'-'||obledesc FROM obselect WHERE oblecodi = leemoble) Observacion_Lectura,
     (SELECT oblecodi||'-'||obledesc FROM obselect WHERE oblecodi = leemobsb) Observacion_Lectura_2,
     (SELECT oblecodi||'-'||obledesc FROM obselect WHERE oblecodi = leemobsc) Observacion_Lectura_3,
-    (SELECT decode(count(1),0,'',count(1)) FROM conssesu cpno WHERE cpno.cosssesu = ss AND cpno.cosstcon = tipoCons AND cpno.cosspefa = pefacodi AND cossmecc= 17) PNO
+    (SELECT decode(count(1),0,'',count(1)) FROM conssesu cpno WHERE cpno.cosssesu = ss AND cpno.cosstcon = tipoCons AND cpno.cosspefa = pefacodi AND cossmecc= 17) PNO,
+    -- R3 (v3): traduccion del periodo de FACTURACION. El CTE `periodos` ya trae
+    -- pefaano/pefames/pefacicl desde perifact pero no los proyectaba. Columnas AL FINAL
+    -- (insertInto es posicional, invariante I13).
+    pefaano  anio_facturacion,
+    pefames  mes_facturacion,
+    pefacicl ciclo_facturacion
 FROM periodos, cruce_lecturas_consumos
 WHERE (leempecs = pecscons OR cosspecs = pecscons)
 AND (leemtcon = tipoCons OR cosstcon = tipoCons)
@@ -159,7 +179,12 @@ SELECT
     (select tconcodi||'-'||tcondesc from tipocons t where t.tconcodi = cosstcon) Tipo_Consumo,
     cosscoca consumo,
     cossfufa funcion_calculo,
-    (select cavccodi||'-'||cavcdesc from calivaco where cavccodi = cosscavc) calificacion
+    (select cavccodi||'-'||cavcdesc from calivaco where cavccodi = cosscavc) calificacion,
+    -- R3 (v3): ventana del periodo de CONSUMO. anio/mes de facturacion ya existian arriba.
+    -- Subconsulta escalar = outer join (§4.4): si falta el maestro devuelve NULL, nunca
+    -- hace desaparecer la fila de consumo. Columnas AL FINAL (I13).
+    (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = cosspecs) fecha_ini_consumo,
+    (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = cosspecs) fecha_fin_consumo
 FROM conssesu
 WHERE cosssesu = :p_servicio_suscrito --{Argumento 1 - servicio_suscrito}
   AND cosspecs = :p_id_periodo_consumo --{Argumento 2 - periodo de consumo}
@@ -192,7 +217,12 @@ SELECT /*+ leading (critica) ... */
        and u.mask = osc.user_id
        and o.order_id = osc.order_id
        and 5 = osc.initial_status_id
-       and 8 = osc.final_status_id) analista_legaliza
+       and 8 = osc.final_status_id) analista_legaliza,
+    -- R3 (v3): ventana del periodo de consumo de la orden. Rama 1 usa orcrpeco.
+    -- Subconsulta escalar = outer join (§4.4). Columnas AL FINAL (I13); el orden y el
+    -- numero de columnas debe ser IDENTICO en las 3 ramas del UNION.
+    (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = orcrpeco) fecha_ini_consumo,
+    (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = orcrpeco) fecha_fin_consumo
 FROM cm_ordecrit critica, or_order o, or_order_activity oa, periodo
 WHERE orcrsesu = :p_servicio_suscrito --{Argumento 2 - servicio suscrito}
   AND orcrtico = nvl(:p_tipo_consumo, orcrtico) --{Argumento 3 - tipo de consumo}
@@ -219,7 +249,10 @@ UNION
            and u.mask = osc.user_id
            and o.order_id = osc.order_id
            and 5 = osc.initial_status_id
-           and 8 = osc.final_status_id) analista_legaliza
+           and 8 = osc.final_status_id) analista_legaliza,
+        -- R3 (v3): mismas 2 columnas que la rama 1, aqui por p.consumption_period.
+        (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = p.consumption_period) fecha_ini_consumo,
+        (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = p.consumption_period) fecha_fin_consumo
     FROM PE_INVEST_CONSUM p,
          or_order o,
          or_order_activity oa,
@@ -248,7 +281,10 @@ UNION
            and u.mask = osc.user_id
            and o.order_id = osc.order_id
            and 5 = osc.initial_status_id
-           and 8 = osc.final_status_id) analista_legaliza
+           and 8 = osc.final_status_id) analista_legaliza,
+        -- R3 (v3): mismas 2 columnas que la rama 1, aqui por p.consumption_period.
+        (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = p.consumption_period) fecha_ini_consumo,
+        (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = p.consumption_period) fecha_fin_consumo
     FROM PE_INVEST_CONSUM p,
          or_order o,
          or_order_activity oa,
@@ -349,7 +385,17 @@ SELECT
      WHERE cargnuse = ss
        AND cargpefa = pefacodi
        AND cargcuco = cucocodi
-       AND nvl(cargpeco, pecscons) <> pecscons) valor_recuperado
+       AND nvl(cargpeco, pecscons) <> pecscons) valor_recuperado,
+    -- R3 (v3) — DECISION documentada (§4.3 pedia "verificar y decidir"):
+    -- SI se expone el periodo de consumo. El prompt suponia que "una cuenta agrupa varios
+    -- periodos de consumo" y que por eso no aplicaba, pero la propia CTE de arriba fija
+    -- UN pecscons por pefacodi (linea `pecscons = pefapecs`), y `valor_periodo` /
+    -- `valor_recuperado` se calculan comparando cargpeco CONTRA ESE pecscons. Sin exponerlo,
+    -- esas dos columnas que ya se entregan son inauditables aguas abajo. Es aditivo, sale
+    -- del CTE (coste cero) y no cambia ninguna fila. Columnas AL FINAL (I13).
+    pecscons id_periodo_consumo,
+    to_char(pecsfeci, 'YYYY-MM-DD') fecha_ini_consumo,
+    to_char(pecsfecf, 'YYYY-MM-DD') fecha_fin_consumo
 FROM data_base
 ORDER BY cucofeve desc
 """
@@ -379,7 +425,27 @@ SELECT
     (select proccons||'-'||procdesc from procesos where proccons = cargprog) programa,
     cargtaco id_tarifa,
     nvl(cargunid,1) unidades,
-    cargvalo valor
+    cargvalo valor,
+    -- R3 (v3): traduccion de periodos. Es la tabla mas beneficiada: detectar una
+    -- RECUPERACION exige comparar el periodo de consumo del cargo contra el de la cuenta
+    -- (§9.3). Subconsultas escalares = outer join (§4.4). Columnas AL FINAL (I13).
+    (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = cargpeco) fecha_ini_consumo,
+    (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = cargpeco) fecha_fin_consumo,
+    -- DECISION (negocio, 2026-07-29): anio/mes se derivan por la MISMA ruta que ya usaba
+    -- id_periodo_facturacion (factura + cuencobr), no por cargos.CARGPEFA como sugeria el
+    -- prompt v3. Razon: esa ruta ya esta en produccion y funciona; usar CARGPEFA habria
+    -- introducido un segundo periodo de facturacion que puede no coincidir con el de arriba.
+    -- Asi anio/mes son SIEMPRE consistentes con id_periodo_facturacion de la misma fila.
+    (select pf.pefaano
+       from perifact pf, factura f, cuencobr cc
+      where cc.cucocodi = cargcuco
+        and f.factcodi  = cc.cucofact
+        and pf.pefacodi = f.factpefa) anio_facturacion,
+    (select pf.pefames
+       from perifact pf, factura f, cuencobr cc
+      where cc.cucocodi = cargcuco
+        and f.factcodi  = cc.cucofact
+        and pf.pefacodi = f.factpefa) mes_facturacion
 FROM cargos c
 WHERE cargcuco = :p_id_cuenta_cobro --{Argumento 1 -cuenta de cobro}
 ORDER BY cargfecr desc, cargconc
@@ -429,65 +495,32 @@ order by 1 desc
 
 # Facturable = relacion (estado_corte × servicio) en confesco.coecfact (S/N).
 # Query entregado por negocio (Jonatan), generalizado sin filtros de un estado.
-QUERY_DIM_ESTADO_CORTE_FACTURABLE = """
-SELECT escocodi, escodesc, coecfact, coecserv, servdesc
-FROM estacort, confesco, servicio
-WHERE escocodi = coeccodi
-  AND coecserv = servcodi
-"""
-
-# NOTA (v3, racionalización de dimensiones): NO existen dimensiones de catálogo para
-# tipo_consumo, observacion_lectura, calificacion, concepto, causal_cargo, metodo_calculo,
-# tipo_solicitud ni estado_investigacion. Siguiendo el patrón del Caso 1, esos códigos se
-# resuelven INLINE en las queries de extracción (subconsultas correlacionadas
-# `codigo||'-'||descripcion`), por lo que las Bronze de datos ya traen código y descripción
-# juntos. La única dimensión materializada es la matriz de facturable (arriba), porque es una
-# MATRIZ DE DECISIÓN (S/N por estado × servicio) que el agente consulta como regla y necesita
-# COMPLETA, no solo las combinaciones presentes en los datos del día.
-# Upgrade path (si el DS necesitara enumerar catálogos completos): UNA tabla genérica
-# `midas_dim_catalogos_bronze (catalogo, codigo, descripcion)` con UNION ALL — no volver a 9 tablas.
+# NOTA (v3 R1, reunión 2026-07-28) — INVARIANTE I11:
+# **La capa Bronze de MIDAS NO materializa dimensiones. Ninguna.**
+#
+# Todo código categórico se resuelve INLINE en la query de extracción como
+# `codigo||'-'||descripcion` (subconsulta correlacionada), y toda información de periodo se
+# traduce por join contra `pericose` / `perifact` (R3). La Bronze de datos ya llega traducida.
+#
+# La última excepción era `QUERY_DIM_ESTADO_CORTE_FACTURABLE` (matriz facturable estado ×
+# servicio). Se eliminó: las dos llaves de `confesco` (`sesuesco` y `sesuserv`) ya viven en la
+# MISMA fila de datos_basicos, así que la subconsulta inline resuelve lo que antes obligaba a
+# un join contra una tabla que había que gobernar, permisar y operar para siempre.
+# Ver `estado_corte_facturable` / `estado_corte_facturable_desc` en QUERY_DATOS_BASICOS.
+#
+# Upgrade path (si el DS necesitara ENUMERAR catálogos completos, no traducir): UNA tabla
+# genérica `midas_dim_catalogos_bronze (catalogo, codigo, descripcion)` con UNION ALL —
+# nunca una tabla por catálogo.
 
 # --- Promociones a la cadena (con binds) -------------------------------------
 
-# A2 — Todos los servicios suscritos de un contrato (multi-servicio).
-# ESPEJO de QUERY_DATOS_BASICOS (mismos joins/catálogos/alias, estilo código-
-# descripción): en vez de filtrar por la instalación de la orden (:address_id),
-# filtra por el contrato (:p_contrato) para traer TODOS los SS del contrato con
-# el mismo schema que datos_basicos. Trae también los retirados (con fechas);
-# la regla de "SS vigente" se aplica en Silver (PENDIENTE-NEG).
-QUERY_SERVICIOS_CONTRATO = """
---servicios_contrato (espejo de datos_basicos_producto, por contrato)
-SELECT
-    sesunuse servicio_suscrito,
-    sesususc contrato,
-    p.address_id instalacion,
-    (SELECT servcodi||'-'||servdesc FROM servicio WHERE servcodi = sesuserv) servicio,
-    to_char(sesufein, 'YYYY-MM-DD') fecha_instalacion,
-    to_char(sesufere, 'YYYY-MM-DD') fecha_retiro,
-    (select * from (select periodicity from pe_per_his_prod where product_id= sesunuse order by created_date desc) where rownum <= 1) periodicidad,
-    (select escocodi||'-'||escodesc from estacort where escocodi = sesuesco) Estado_Corte,
-    (select catecodi||'-'||catedesc from categori where catecodi = sesucate) Categoria,
-    (select sucacodi||'-'||sucadesc from subcateg where sucacate = sesucate and sucacodi = sesusuca) subcategoria,
-    sesucicl as ciclo,
-    (select plsucodi||'-'||plsudesc from plansusc where plsucodi = sesuplfa) Plan_Facturacion,
-    (select plsucodi||'-'||plsudesc from pr_product,plansusc where commercial_plan_id = plsucodi and product_id = sesunuse) plan_facturacion_pr_product,
-    subscriber_name||' '||SUBS_LAST_NAME Nombre_Cliente,
-    cl.IDENTIFICATION identificacion,
-    (select geograp_location_id||'-'||description from ge_geogra_location g where g.geograp_location_id = d.geograp_location_id) Localidad,
-    d.address_parsed direccion,
-    cadastral_id PAGINA,
-    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucosacu > 0) SALDO_PENDIENTE,
-    (select count(1) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) CUENTAS_VENCIDAS,
-    (select sum(cucosacu) from cuencobr where cuconuse = sesunuse and cucofeve < sysdate and cucosacu > 0) SALDO_VENCIDO
-FROM servsusc s, pr_product p, ab_address d, suscripc c, ge_subscriber cl
-WHERE 1=1
-AND sesunuse = product_id
-AND c.susccodi = s.sesususc
-AND p.product_id = s.sesunuse
-AND p.address_id = d.address_id
-AND cl.subscriber_id = c.suscclie
-AND s.sesususc = :p_contrato -- roster del contrato (incluye retirados; vigencia en Silver)
-"""
+# v3 R2 — `QUERY_SERVICIOS_CONTRATO` ELIMINADA (invariante I12: un agrupador, una tabla).
+# Era un espejo literal de QUERY_DATOS_BASICOS que solo cambiaba el filtro
+# (:p_contrato en vez de :address_id). El roster del contrato se obtiene ahora FILTRANDO
+# midas_datos_basicos_producto_bronze por `contrato`; no hace falta una segunda extracción.
+# Verificado 2026-07-29: los 782 SS que sólo existían en la tabla retirada pertenecían a
+# 181 contratos ausentes tanto de ordenes_pendientes como de datos_basicos, es decir eran
+# residuo de corridas anteriores, no información nueva.
 
 # A3 — Consumos de un servicio suscrito (cualquiera del contrato), ultimos 6
 # meses. Query NUEVA sobre conssesu parametrizada SOLO por SS (validada en Fase 1):
@@ -503,7 +536,12 @@ SELECT
     (SELECT mecccodi||'-'||meccdesc FROM mecacons WHERE mecccodi = cossmecc) metodo_calculo,
     (SELECT tconcodi||'-'||tcondesc FROM tipocons t WHERE t.tconcodi = cosstcon) tipo_consumo,
     (SELECT cavccodi||'-'||cavcdesc FROM calivaco WHERE cavccodi = cosscavc) calificacion,
-    to_char(cossfere, 'YYYY-MM-DD') fecha_registro
+    to_char(cossfere, 'YYYY-MM-DD') fecha_registro,
+    -- R3 (v3): mismas 4 columnas de periodo que consumos_producto. Escalares = outer join.
+    (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = cosspecs) fecha_ini_consumo,
+    (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = cosspecs) fecha_fin_consumo,
+    (select pefaano from perifact where pefacodi = cosspefa) anio_facturacion,
+    (select pefames from perifact where pefacodi = cosspefa) mes_facturacion
 FROM conssesu
 WHERE cosssesu = :p_servicio_suscrito
   AND cossfere >= ADD_MONTHS(SYSDATE, -6)
@@ -525,9 +563,64 @@ SELECT
     i.invest_cons_state_id estado_investigacion,
     (SELECT s.invest_cons_state_id||'-'||s.description FROM pe_invest_cons_state s
       WHERE s.invest_cons_state_id = i.invest_cons_state_id) estado_investigacion_desc,
-    to_char(i.register_date, 'YYYY-MM-DD HH24:MI:SS') fecha_registro
+    to_char(i.register_date, 'YYYY-MM-DD HH24:MI:SS') fecha_registro,
+    -- R3 (v3): ventana del periodo de consumo investigado. ADEMAS resuelve el watch-item
+    -- abierto sobre el formato de consumption_period: si estas dos columnas salen NULL en
+    -- TODAS las filas, consumption_period NO es un PECSCONS y hay que reportarlo (§4.3).
+    -- Umbral esperado de resolucion: > 95%. Escalar = outer join (§4.4).
+    (select to_char(pecsfeci, 'YYYY-MM-DD') from pericose where pecscons = i.consumption_period) fecha_ini_consumo,
+    (select to_char(pecsfecf, 'YYYY-MM-DD') from pericose where pecscons = i.consumption_period) fecha_fin_consumo
 FROM pe_invest_consum i
 WHERE i.product_id = :p_servicio_suscrito
   AND i.register_date >= ADD_MONTHS(SYSDATE, -6)
 ORDER BY i.register_date DESC
+"""
+
+
+# =============================================================================
+# R4 (v3) — Perdidas No Operacionales (PNO). Rejilla principal de la pantalla que
+# revisa el analista. Query entregada por Jonatan (reunion 2026-07-28).
+#
+# COMPLEMENTA, no reemplaza, la senal que ya existe en cargos (causal 74 + programa 307):
+# cargos DETECTA que hubo una PNO; esta tabla EXPLICA cual fue la irregularidad y en que
+# ventana de fraude.
+#
+# Nombre `perdidas_no_operacionales` (no la sigla "pno") a proposito: `pno` ya se usa como
+# COLUMNA en midas_datos_lecturas_producto_bronze con otro significado (marcador disperso).
+#
+# Divergencias deliberadas frente al SQL crudo entregado:
+#   1. Hint `LEADING(fm_possible_ntl))` tenia un parentesis de mas -> Oracle IGNORA en
+#      silencio un hint mal formado, asi que el plan no era el probado. Corregido.
+#   2. `||'' - ''||` era escape de literal PL/SQL -> en SQL plano es `||'-'||`.
+#   3. `normalized_prod_id` se PROYECTA como servicio_suscrito (el original solo lo
+#      filtraba): sin el, el paso encadenado no puede escribir la llave.
+#   4. Literal `= 133284722` -> bind `:p_servicio_suscrito`, como el resto de la cadena.
+#   5. Alias en espanol, convencion Bronze del proyecto.
+#
+# PENDIENTE-NEG: `status` se trae CRUDO. No se pudo verificar contra Oracle si tiene
+# catalogo asociado; si lo tiene, resolverlo inline como codigo-descripcion (patron I11).
+# PENDIENTE-NEG: sin ventana temporal. Una PNO puede ser antigua y recortarla perderia el
+# expediente; acotar por register_date solo con confirmacion de negocio (§5.4.4).
+# =============================================================================
+QUERY_PERDIDAS_NO_OPERACIONALES = """
+--perdidas_no_operacionales (rejilla principal de la pantalla PNO)
+SELECT /*+ LEADING(fm_possible_ntl)
+           INDEX(fm_irregularity_type PK_FM_IRREGULARITY_TYPE)
+           INDEX(fm_possible_ntl IDX_FM_POSSIBLE_NTL11) */
+    fm_possible_ntl.normalized_prod_id                      servicio_suscrito,
+    fm_possible_ntl.possible_ntl_id                         id_pno,
+    fm_possible_ntl.status                                  estado_pno,
+    fm_irregularity_type.irregulari_type_id||'-'||
+        fm_irregularity_type.description                    tipo_irregularidad,
+    fm_possible_ntl.package_id                              id_solicitud,
+    to_char(fm_possible_ntl.register_date,   'YYYY-MM-DD HH24:MI:SS') fecha_registro,
+    to_char(fm_possible_ntl.fraud_start_date,'YYYY-MM-DD')  fecha_inicio_fraude,
+    to_char(fm_possible_ntl.fraud_end_date,  'YYYY-MM-DD')  fecha_fin_fraude,
+    fm_possible_ntl.order_id                                id_orden,
+    fm_possible_ntl.comment_                                comentario
+FROM    fm_possible_ntl,
+        fm_irregularity_type
+WHERE   fm_possible_ntl.irregulari_type_id = fm_irregularity_type.irregulari_type_id (+)
+    AND fm_possible_ntl.normalized_prod_id = :p_servicio_suscrito
+ORDER BY fm_possible_ntl.possible_ntl_id DESC
 """

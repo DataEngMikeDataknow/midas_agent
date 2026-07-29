@@ -43,15 +43,15 @@ PASO_COMENTARIOS         = ("midas_datos_cometarios_ordenes_bronze",     "QUERY_
 PASO_CUENTAS_COBRO       = ("midas_datos_cuentas_cobro_bronze",          "QUERY_CUENTAS_COBRO")
 PASO_DETALLE_CARGOS      = ("midas_datos_detalle_cargos_bronze",         "QUERY_DETALLE_CARGOS")
 
-# ─── Caso 2: ÚNICA dimensión materializada (matriz de decisión facturable) ───
-# Los demás catálogos NO se materializan: se resuelven inline en las queries (patrón Caso 1).
-PASO_DIM_ESTADO_CORTE = ("midas_dim_estado_corte_facturable_bronze", "QUERY_DIM_ESTADO_CORTE_FACTURABLE")
+# ─── v3 R1: NO hay pasos de dimension. Ninguna. Invariante I11. ───
 
 # ─── Caso 2: promociones a la cadena ───
 PASO_SOLICITUDES        = ("midas_datos_detalle_solicitudes_bronze",  "QUERY_DETALLE_SOLICITUDES")
-PASO_SERVICIOS_CONTRATO = ("midas_datos_servicios_contrato_bronze",   "QUERY_SERVICIOS_CONTRATO")
 PASO_CONSUMOS_CONTRATO  = ("midas_datos_consumos_contrato_bronze",    "QUERY_CONSUMOS_CONTRATO")
 PASO_INVESTIGACION      = ("midas_datos_investigacion_consumo_bronze", "QUERY_INVESTIGACION_CONSUMO")
+
+# ─── R4 (v3): Perdidas No Operacionales. Espeja el driver de A1 (solicitudes). ───
+PASO_PNO = ("midas_datos_perdidas_no_operacionales_bronze", "QUERY_PERDIDAS_NO_OPERACIONALES")
 
 
 def _ejecutar_paso(
@@ -118,15 +118,6 @@ def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) 
     """
     log.info("== Inicio cadena extraccion (run_id=%s) ==", control.run_id)
 
-    # ── Caso 2: dimensión de facturable (matriz de decisión, full overwrite) ──
-    # No aborta la cadena si falla (p. ej. falta un GRANT en confesco/servicio): se
-    # registra el fallo y se continua con la cadena principal.
-    _ejecutar_paso(
-        control, *PASO_DIM_ESTADO_CORTE,
-        fn=processing_module.run_query_dim_estado_corte_facturable,
-        abortar_en_fallo=False,
-    )
-
     # ── Cadena principal (Caso 1, comportamiento intacto: aborta al primer fallo) ──
     df_ord, _ = _ejecutar_paso(
         control, *PASO_ORDENES_PENDIENTES,
@@ -168,22 +159,26 @@ def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) 
         fn=lambda: processing_module.run_query_detalle_solicitudes(df_basicos),
         abortar_en_fallo=False,
     )
-    # A2: roster de SS del contrato (padre = datos_basicos, join contrato).
-    df_serv_contrato, _ = _ejecutar_paso(
-        control, *PASO_SERVICIOS_CONTRATO,
-        fn=lambda: processing_module.run_query_servicios_contrato(df_basicos),
-        abortar_en_fallo=False,
-    )
-    # A3: consumos de cada SS del roster (padre = servicios_contrato).
+    # A3 (v3 R2): consumos de los SS hermanos del contrato. El padre ya no es el roster
+    # retirado, sino datos_basicos acotado a los contratos de las órdenes.
     _ejecutar_paso(
         control, *PASO_CONSUMOS_CONTRATO,
-        fn=lambda: processing_module.run_query_consumos_contrato(df_serv_contrato),
+        fn=lambda: processing_module.run_query_consumos_contrato(df_basicos, df_ord),
         abortar_en_fallo=False,
     )
     # A4: consumo en investigacion (padre = datos_basicos, join servicio_suscrito).
     _ejecutar_paso(
         control, *PASO_INVESTIGACION,
         fn=lambda: processing_module.run_query_investigacion_consumo(df_basicos),
+        abortar_en_fallo=False,
+    )
+
+    # R4 (v3): PNO (padre = datos_basicos, join servicio_suscrito; espejo de A1).
+    # abortar_en_fallo=False es OBLIGATORIO aqui (§5.4.5): FM_* es un submodelo NUEVO y un
+    # GRANT faltante no puede tumbar la cadena del Caso 1. El fallo queda en midas_log_cargas.
+    _ejecutar_paso(
+        control, *PASO_PNO,
+        fn=lambda: processing_module.run_query_perdidas_no_operacionales(df_basicos),
         abortar_en_fallo=False,
     )
 

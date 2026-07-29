@@ -146,13 +146,25 @@ conectar, para distinguir un problema de firewall de uno de credenciales.
 
 ## Tablas de la cadena (control) — Caso 1 + Caso 2
 
-El seed de `crear_objetos` siembra **13 cargas** (`job_name = 'midas_bronze'`):
+El seed de `crear_objetos` siembra **12 cargas**, todas `FULL_CHAINED`
+(`job_name = 'midas_bronze'`):
 
-| Grupo | tipo_carga | Tablas |
-|---|---|---|
-| **Dimensión** (1) | `QUERY_FULL_OVERWRITE` | `midas_dim_estado_corte_facturable_bronze` |
-| **Cadena Caso 1** | `FULL_CHAINED` | las 8 `midas_*_bronze` de órdenes/básicos/lecturas/consumos/crítica/comentarios/cuentas/cargos |
-| **Promociones Caso 2** | `FULL_CHAINED` | `midas_datos_detalle_solicitudes_bronze` (A1), `midas_datos_servicios_contrato_bronze` (A2), `midas_datos_consumos_contrato_bronze` (A3), `midas_datos_investigacion_consumo_bronze` (A4) |
+| Grupo | Tablas |
+|---|---|
+| **Cadena Caso 1** (8) | las 8 `midas_*_bronze` de órdenes/básicos/lecturas/consumos/crítica/comentarios/cuentas/cargos |
+| **Promociones Caso 2** (3) | `midas_datos_detalle_solicitudes_bronze` (A1), `midas_datos_consumos_contrato_bronze` (A3), `midas_datos_investigacion_consumo_bronze` (A4) |
+| **PNO** (1, v3 R4) | `midas_datos_perdidas_no_operacionales_bronze` (orden 25) |
+
+**No hay dimensiones materializadas** — ninguna (invariante I11, v3 R1). La matriz facturable
+era la última y ahora se resuelve inline en `QUERY_DATOS_BASICOS`
+(`estado_corte_facturable`, `estado_corte_facturable_desc`). Su fila de control se
+**desactiva**, no se borra; el `DROP TABLE` vive en
+[scripts/migracion_v3_limpieza.sql](scripts/migracion_v3_limpieza.sql) y **se ejecuta a mano**,
+ambiente por ambiente.
+
+**Tampoco hay tablas espejo** (invariante I12, v3 R2): `midas_datos_servicios_contrato_bronze`
+se retiró porque solo cambiaba el filtro respecto a `datos_basicos`. El roster de un contrato
+se obtiene filtrando: `WHERE contrato = (SELECT contrato FROM ... WHERE servicio_suscrito = :ss)`.
 
 ### Por qué UNA sola dimensión (y no un catálogo por código)
 Siguiendo el patrón del Caso 1, los códigos categóricos se resuelven **inline** en las queries

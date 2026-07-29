@@ -16,29 +16,42 @@ import src.midas.main_ingestion as mi               # noqa: E402
 from src.midas.framework import chain_runner        # noqa: E402
 
 
-# v3: ÚNICA dimensión materializada (matriz de decisión facturable). El resto de
-# catálogos se resuelven INLINE en las queries (patrón del Caso 1).
-DIMS = ["QUERY_DIM_ESTADO_CORTE_FACTURABLE"]
-DIM_TABLES = ["midas_dim_estado_corte_facturable_bronze"]
-# Nombres podados en v3: NO deben existir en el código.
+# v3 R1: NO hay dimensiones materializadas. Ninguna. Invariante I11.
+DIMS = []
+DIM_TABLES = []
+# Todas las dims eliminadas: NO deben existir en el código.
 DIMS_ELIMINADAS = [
     "QUERY_DIM_TIPO_CONSUMO", "QUERY_DIM_OBSERVACION_LECTURA", "QUERY_DIM_CALIFICACION",
     "QUERY_DIM_CONCEPTO", "QUERY_DIM_CAUSAL_CARGO", "QUERY_DIM_METODO_CALCULO",
     "QUERY_DIM_TIPO_SOLICITUD", "QUERY_DIM_ESTADO_INVESTIGACION",
+    "QUERY_DIM_ESTADO_CORTE_FACTURABLE",
 ]
 PROMO_TABLES = [
-    "midas_datos_detalle_solicitudes_bronze", "midas_datos_servicios_contrato_bronze",
+    "midas_datos_detalle_solicitudes_bronze",
     "midas_datos_consumos_contrato_bronze", "midas_datos_investigacion_consumo_bronze",
 ]
+# v3 R2: retirada. Un agrupador, una tabla (I12).
+TABLAS_RETIRADAS_V3 = [
+    "midas_dim_estado_corte_facturable_bronze",
+    "midas_datos_servicios_contrato_bronze",
+]
+# v3 R4
+PNO_TABLE = "midas_datos_perdidas_no_operacionales_bronze"
+# v3 R3: columnas de periodo agregadas AL FINAL de cada query (invariante I13).
+COLUMNAS_R3 = {
+    "QUERY_DATOS_LECTURA":         ["anio_facturacion", "mes_facturacion", "ciclo_facturacion"],
+    "QUERY_DATOS_CONSUMOS":        ["fecha_ini_consumo", "fecha_fin_consumo"],
+    "QUERY_ORDENES_CRITICA_PEVIA": ["fecha_ini_consumo", "fecha_fin_consumo"],
+    "QUERY_CUENTAS_COBRO":         ["id_periodo_consumo", "fecha_ini_consumo", "fecha_fin_consumo"],
+    "QUERY_DETALLE_CARGOS":        ["fecha_ini_consumo", "fecha_fin_consumo",
+                                    "anio_facturacion", "mes_facturacion"],
+    "QUERY_CONSUMOS_CONTRATO":     ["fecha_ini_consumo", "fecha_fin_consumo",
+                                    "anio_facturacion", "mes_facturacion"],
+    "QUERY_INVESTIGACION_CONSUMO": ["fecha_ini_consumo", "fecha_fin_consumo"],
+}
 
 
 class TestNuevasQueriesBinds(unittest.TestCase):
-    def test_servicios_contrato_bind(self):
-        prepared, values = database._prepare(queries.QUERY_SERVICIOS_CONTRATO, {"p_contrato": 123})
-        self.assertEqual(prepared.count("?"), 1)
-        self.assertEqual(values, [123])
-        self.assertNotIn(":p_contrato", prepared)
-
     def test_consumos_contrato_bind(self):
         prepared, values = database._prepare(queries.QUERY_CONSUMOS_CONTRATO, {"p_servicio_suscrito": 5})
         self.assertEqual(prepared.count("?"), 1)
@@ -63,20 +76,26 @@ class TestTablesConfig(unittest.TestCase):
         self.by_name = {c["name"]: c for c in self.cfg}
 
     def test_conteo_total(self):
-        # 8 cadena + 1 dimensión (facturable) + 4 promociones
-        self.assertEqual(len(self.cfg), 13)
+        # 8 cadena + 3 promociones + 1 PNO = 12. Objetivo de la v3 alcanzado.
+        self.assertEqual(len(self.cfg), 12)
+
+    def test_tablas_retiradas_no_estan(self):
+        for t in TABLAS_RETIRADAS_V3:
+            self.assertNotIn(t, self.by_name, f"{t} debió retirarse en v3")
+
+    def test_pno_presente_y_configurada(self):
+        pno = self.by_name[PNO_TABLE]
+        self.assertEqual(pno["primary_key"], "id_pno")
+        self.assertTrue(pno["path"].endswith("perdidas_no_operacionales.parquet"))
+        self.assertTrue(pno.get("column_comments"), "PNO sin column_comments (§7.4)")
 
     def test_nombres_unicos(self):
         nombres = [c["name"] for c in self.cfg]
         self.assertEqual(len(nombres), len(set(nombres)))
 
     def test_nuevas_entradas_presentes(self):
-        for t in DIM_TABLES + PROMO_TABLES:
+        for t in DIM_TABLES + PROMO_TABLES + [PNO_TABLE]:
             self.assertIn(t, self.by_name)
-
-    def test_pk_compuesta_facturable(self):
-        self.assertEqual(self.by_name["midas_dim_estado_corte_facturable_bronze"]["primary_key"],
-                         ["escocodi", "coecserv"])
 
     def test_pk_solicitudes_compuesta(self):
         self.assertEqual(self.by_name["midas_datos_detalle_solicitudes_bronze"]["primary_key"],
@@ -93,8 +112,8 @@ class TestTablesConfig(unittest.TestCase):
 
 
 class TestControlYPasos(unittest.TestCase):
-    def test_query_key_tiene_13(self):
-        self.assertEqual(len(mi._QUERY_KEY), 13)
+    def test_query_key_tiene_12(self):
+        self.assertEqual(len(mi._QUERY_KEY), 12)
 
     def test_dims_podadas_no_existen(self):
         """v3: las 8 dims redundantes no deben quedar ni en queries ni en processing."""
@@ -102,24 +121,76 @@ class TestControlYPasos(unittest.TestCase):
             self.assertFalse(hasattr(queries, nombre), f"quedó {nombre} en queries.py")
         for fn in ["run_query_dim_tipo_consumo", "run_query_dim_calificacion",
                    "run_query_dim_concepto", "run_query_dim_tipo_solicitud",
-                   "run_query_dim_estado_investigacion"]:
+                   "run_query_dim_estado_investigacion",
+                   "run_query_dim_estado_corte_facturable", "_run_dim"]:
             self.assertFalse(hasattr(processing, fn), f"quedó processing.{fn}")
 
     def test_pasos_chain_runner_existen(self):
         pasos = [
-            chain_runner.PASO_DIM_ESTADO_CORTE,
-            chain_runner.PASO_SOLICITUDES, chain_runner.PASO_SERVICIOS_CONTRATO,
+            chain_runner.PASO_SOLICITUDES,
             chain_runner.PASO_CONSUMOS_CONTRATO, chain_runner.PASO_INVESTIGACION,
+            chain_runner.PASO_PNO,
         ]
         for tabla, query_key in pasos:
             self.assertTrue(tabla.startswith("midas_"))
             self.assertTrue(query_key.startswith("QUERY_"))
 
     def test_processing_tiene_funciones_nuevas(self):
-        for fn in ["run_query_dim_estado_corte_facturable",
-                   "run_query_servicios_contrato", "run_query_consumos_contrato",
-                   "run_query_investigacion_consumo"]:
+        for fn in ["run_query_consumos_contrato",
+                   "run_query_investigacion_consumo",
+                   "run_query_perdidas_no_operacionales"]:
             self.assertTrue(hasattr(processing, fn), f"falta processing.{fn}")
+
+
+class TestR3TraduccionPeriodos(unittest.TestCase):
+    """v3 R3: cada query tocada expone sus columnas de periodo, AL FINAL y con outer join."""
+
+    def test_columnas_presentes(self):
+        for nombre, columnas in COLUMNAS_R3.items():
+            sql = getattr(queries, nombre)
+            for col in columnas:
+                self.assertIn(col, sql, f"{nombre} no expone {col}")
+
+    def test_critica_agrega_en_las_tres_ramas(self):
+        """El UNION exige el MISMO numero de columnas en las 3 ramas."""
+        sql = queries.QUERY_ORDENES_CRITICA_PEVIA
+        self.assertEqual(sql.count("fecha_ini_consumo"), 3)
+        self.assertEqual(sql.count("fecha_fin_consumo"), 3)
+
+    def test_sin_inner_join_a_los_maestros(self):
+        """§4.4: subconsulta escalar o (+), nunca inner join contra pericose/perifact:
+        un maestro faltante no puede hacer desaparecer filas."""
+        for nombre in COLUMNAS_R3:
+            sql = getattr(queries, nombre)
+            self.assertNotIn("JOIN pericose", sql.upper().replace("LEFT JOIN", "LEFT_JOIN"))
+
+
+class TestR4PerdidasNoOperacionales(unittest.TestCase):
+    def test_bind_unico(self):
+        prep, vals = database._prepare(queries.QUERY_PERDIDAS_NO_OPERACIONALES,
+                                       {"p_servicio_suscrito": 90858173})
+        self.assertEqual(prep.count("?"), 1)
+        self.assertEqual(vals, [90858173])
+
+    def test_hint_bien_formado(self):
+        """El SQL crudo traia LEADING(fm_possible_ntl)) con un parentesis de mas; Oracle
+        ignora en silencio un hint mal formado."""
+        sql = queries.QUERY_PERDIDAS_NO_OPERACIONALES
+        self.assertIn("LEADING(fm_possible_ntl)", sql)
+        self.assertNotIn("LEADING(fm_possible_ntl))", sql)
+
+    def test_proyecta_el_servicio_suscrito(self):
+        """Sin esta proyeccion el paso encadenado no puede escribir la llave."""
+        self.assertIn("normalized_prod_id", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
+        self.assertIn("servicio_suscrito", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
+
+    def test_sin_literal_cableado(self):
+        self.assertNotIn("133284722", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
+
+    def test_concatenacion_sql_plano(self):
+        """El original venia con ||'' - ''|| por ser literal PL/SQL."""
+        self.assertNotIn("|| - ||", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
+        self.assertIn("||'-'||", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
 
 
 # Lista oficial de facturable (confesco), entregada por negocio (prompt v2 §1.4).
@@ -141,8 +212,64 @@ FIXTURE_FACTURABLE = [
 ]
 
 
-class TestDimFacturableFixture(unittest.TestCase):
-    """Contrato ESTRUCTURAL de la dimensión facturable (no valida la query en vivo)."""
+class TestR1FacturableInline(unittest.TestCase):
+    """v3 R1: la matriz facturable se resuelve inline, sin tabla de dimensión."""
+
+    def test_columnas_en_basicos(self):
+        sql = queries.QUERY_DATOS_BASICOS
+        self.assertIn("estado_corte_facturable", sql)
+        self.assertIn("confesco", sql)
+
+    def test_no_reemplaza_null_por_n(self):
+        """NULL = combinación no parametrizada; NO es lo mismo que 'no facturable'."""
+        sql = queries.QUERY_DATOS_BASICOS
+        self.assertNotIn("nvl(coecfact", sql.lower())
+        self.assertNotIn("coalesce(coecfact", sql.lower())
+
+    def test_dimension_eliminada(self):
+        self.assertFalse(hasattr(queries, "QUERY_DIM_ESTADO_CORTE_FACTURABLE"))
+        self.assertNotIn("midas_dim_estado_corte_facturable_bronze", mi._QUERY_KEY)
+
+
+class TestR2RosterDesdeDatosBasicos(unittest.TestCase):
+    """v3 R2: el roster del contrato sale de datos_basicos filtrado, sin tabla espejo."""
+
+    def test_query_y_extractor_eliminados(self):
+        self.assertFalse(hasattr(queries, "QUERY_SERVICIOS_CONTRATO"))
+        self.assertFalse(hasattr(processing, "run_query_servicios_contrato"))
+        self.assertFalse(hasattr(chain_runner, "PASO_SERVICIOS_CONTRATO"))
+
+    def test_a3_recibe_basicos_y_ordenes(self):
+        import inspect
+        params = list(inspect.signature(processing.run_query_consumos_contrato).parameters)
+        self.assertEqual(params, ["df_datos_basicos", "df_ordenes_pendientes"])
+
+    def test_a3_acota_por_contrato_no_por_instalacion(self):
+        """Los SS iterados son los del CONTRATO de las órdenes, no todos los de la
+        instalación: la instalación traería SS de contratos ajenos (Caso 13)."""
+        import pandas as pd
+        basicos = pd.DataFrame({
+            "SERVICIO_SUSCRITO": [1, 2, 3, 4],
+            "CONTRATO":          [10, 10, 20, 20],   # dos contratos en la misma instalación
+        })
+        ordenes = pd.DataFrame({"SERVICIO_SUSCRITO": [1]})   # la orden es del contrato 10
+
+        llamados = []
+        original = processing.db.execute_query
+        processing.db.execute_query = lambda q, p=None: (
+            llamados.append(p["p_servicio_suscrito"]) or __import__("pandas").DataFrame()
+        )
+        try:
+            processing.run_query_consumos_contrato(basicos, ordenes)
+        finally:
+            processing.db.execute_query = original
+
+        self.assertEqual(sorted(llamados), [1, 2], "debe iterar solo el contrato 10")
+
+
+class TestFacturableFixtureNegocio(unittest.TestCase):
+    """Contrato ESTRUCTURAL de la matriz facturable entregada por negocio.
+    Sigue vigente tras R1: lo que cambió es DÓNDE vive (inline), no QUÉ dice."""
 
     def _por_servicio(self, serv):
         return {code: sn for (code, sn, s) in FIXTURE_FACTURABLE if s == serv}
@@ -224,7 +351,7 @@ class TestPasoNoCriticoNoAborta(unittest.TestCase):
             raise RuntimeError("Oracle caido")
 
         df, n = chain_runner._ejecutar_paso(
-            control, "midas_dim_estado_corte_facturable_bronze", "QUERY_DIM_ESTADO_CORTE_FACTURABLE",
+            control, "midas_datos_perdidas_no_operacionales_bronze", "QUERY_PERDIDAS_NO_OPERACIONALES",
             fn=_boom, abortar_en_fallo=False,
         )
         self.assertIsNone(df)

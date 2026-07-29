@@ -30,13 +30,12 @@ _QUERY_KEY = {
     "midas_datos_cometarios_ordenes_bronze":     "QUERY_COMENTARIOS_ORDENES",
     "midas_datos_cuentas_cobro_bronze":          "QUERY_CUENTAS_COBRO",
     "midas_datos_detalle_cargos_bronze":         "QUERY_DETALLE_CARGOS",
-    # ─── Caso 2: dimensiones de referencia ───
-    "midas_dim_estado_corte_facturable_bronze":  "QUERY_DIM_ESTADO_CORTE_FACTURABLE",
     # ─── Caso 2: promociones ───
     "midas_datos_detalle_solicitudes_bronze":    "QUERY_DETALLE_SOLICITUDES",
-    "midas_datos_servicios_contrato_bronze":     "QUERY_SERVICIOS_CONTRATO",
     "midas_datos_consumos_contrato_bronze":      "QUERY_CONSUMOS_CONTRATO",
     "midas_datos_investigacion_consumo_bronze":  "QUERY_INVESTIGACION_CONSUMO",
+    # ─── v3 R4: Perdidas No Operacionales ───
+    "midas_datos_perdidas_no_operacionales_bronze": "QUERY_PERDIDAS_NO_OPERACIONALES",
 }
 
 
@@ -57,25 +56,42 @@ def build_tables_config(source_volume_path: str) -> list:
             "name": "midas_datos_basicos_producto_bronze",
             "path": f"{source_volume_path}/datos_basicos_producto.parquet",
             "primary_key": "servicio_suscrito",
-            "description": "Información básica del producto."
+            "description": "Información básica del producto.",
+            "column_comments": [
+                {"column": "estado_corte_facturable", "comment": "R1: confesco.COECFACT (S/N) para (estado_corte x servicio), resuelto inline. NULL = combinacion no parametrizada, NO es 'no facturable'."},
+                {"column": "estado_corte_facturable_desc", "comment": "R1: codigo-descripcion de estado_corte_facturable."}
+            ]
         },
         {
             "name": "midas_datos_lecturas_producto_bronze",
             "path": f"{source_volume_path}/datos_lecturas_producto.parquet",
             "primary_key": "servicio_suscrito",
-            "description": "Lecturas del medidor."
+            "description": "Lecturas del medidor.",
+            "column_comments": [
+                {"column": "anio_facturacion", "comment": "R3: anio del periodo de facturacion (perifact.PEFAANO)."},
+                {"column": "mes_facturacion", "comment": "R3: mes del periodo de facturacion (perifact.PEFAMES)."},
+                {"column": "ciclo_facturacion", "comment": "R3: ciclo del periodo de facturacion (perifact.PEFACICL). Distinto de `ciclo` de servsusc."}
+            ]
         },
         {
             "name": "midas_datos_consumos_producto_bronze",
             "path": f"{source_volume_path}/datos_consumos_producto.parquet",
             "primary_key": "servicio_suscrito",
-            "description": "Consumos facturados."
+            "description": "Consumos facturados.",
+            "column_comments": [
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."}
+            ]
         },
         {
             "name": "midas_datos_ordenes_previa_critica_bronze",
             "path": f"{source_volume_path}/datos_ordenes_previa_critica.parquet",
             "primary_key": "id_orden",
-            "description": "Órdenes de crítica y previa."
+            "description": "Órdenes de crítica y previa.",
+            "column_comments": [
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."}
+            ]
         },
         {
             "name": "midas_datos_cometarios_ordenes_bronze",
@@ -87,20 +103,24 @@ def build_tables_config(source_volume_path: str) -> list:
             "name": "midas_datos_cuentas_cobro_bronze",
             "path": f"{source_volume_path}/datos_cuentas_cobro.parquet",
             "primary_key": "id_cuenta_cobro",
-            "description": "Cuentas de cobro."
+            "description": "Cuentas de cobro.",
+            "column_comments": [
+                {"column": "id_periodo_consumo", "comment": "R3: periodo de consumo canonico de la cuenta (perifact.PEFAPECS). Es el discriminador de valor_periodo vs valor_recuperado."},
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."}
+            ]
         },
         {
             "name": "midas_datos_detalle_cargos_bronze",
             "path": f"{source_volume_path}/datos_detalle_cargos.parquet",
             "primary_key": "id_cuenta_cobro",
-            "description": "Detalle de cargos."
-        },
-        # ───────────────── Caso 2: dimensiones de referencia ─────────────────
-        {
-            "name": "midas_dim_estado_corte_facturable_bronze",
-            "path": f"{source_volume_path}/dim_estado_corte_facturable.parquet",
-            "primary_key": ["escocodi", "coecserv"],  # facturable = (estado_corte × servicio)
-            "description": "Dimensión: estado de corte facturable (coecfact S/N) por servicio."
+            "description": "Detalle de cargos.",
+            "column_comments": [
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."},
+                {"column": "anio_facturacion", "comment": "R3: anio de cargos.CARGPEFA (periodo propio del cargo). Puede diferir de id_periodo_facturacion, que viene de la cuenta: esa diferencia marca recuperacion."},
+                {"column": "mes_facturacion", "comment": "R3: mes de cargos.CARGPEFA (periodo propio del cargo)."}
+            ]
         },
         # ───────────────── Caso 2: promociones ─────────────────
         {
@@ -113,22 +133,43 @@ def build_tables_config(source_volume_path: str) -> list:
             "description": "Solicitudes/paquetes por servicio suscrito (mo_packages)."
         },
         {
-            "name": "midas_datos_servicios_contrato_bronze",
-            "path": f"{source_volume_path}/datos_servicios_contrato.parquet",
-            "primary_key": "servicio_suscrito",
-            "description": "Roster: todos los SS del contrato (incluye retirados; vigencia en Silver)."
-        },
-        {
             "name": "midas_datos_consumos_contrato_bronze",
             "path": f"{source_volume_path}/datos_consumos_contrato.parquet",
             "primary_key": "servicio_suscrito",
-            "description": "Consumos (6m) de cada SS del contrato (multi-servicio)."
+            "description": "Consumos (6m) de cada SS del contrato (multi-servicio).",
+            "column_comments": [
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."},
+                {"column": "anio_facturacion", "comment": "R3: anio del periodo de facturacion (perifact.PEFAANO)."},
+                {"column": "mes_facturacion", "comment": "R3: mes del periodo de facturacion (perifact.PEFAMES)."}
+            ]
         },
         {
             "name": "midas_datos_investigacion_consumo_bronze",
             "path": f"{source_volume_path}/datos_investigacion_consumo.parquet",
             "primary_key": "servicio_suscrito",
-            "description": "Consumo en investigación (PE_INVEST_CONSUM); estado crudo."
+            "description": "Consumo en investigación (PE_INVEST_CONSUM); estado crudo.",
+            "column_comments": [
+                {"column": "fecha_ini_consumo", "comment": "R3: inicio del periodo investigado. Si sale NULL en TODAS las filas, consumption_period no es un PECSCONS: reportar."},
+                {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."}
+            ]
+        },
+        # ───────────────── v3 R4: Perdidas No Operacionales ─────────────────
+        {
+            "name": "midas_datos_perdidas_no_operacionales_bronze",
+            "path": f"{source_volume_path}/perdidas_no_operacionales.parquet",
+            "primary_key": "id_pno",
+            "description": "Expedientes de Perdida No Operacional (FM_POSSIBLE_NTL): irregularidad y ventana de fraude por SS.",
+            "column_comments": [
+                {"column": "id_pno", "comment": "PK. FM_POSSIBLE_NTL.POSSIBLE_NTL_ID."},
+                {"column": "servicio_suscrito", "comment": "FM_POSSIBLE_NTL.NORMALIZED_PROD_ID. PENDIENTE-NEG: confirmar contra datos que equivale al SS."},
+                {"column": "estado_pno", "comment": "FM_POSSIBLE_NTL.STATUS, CRUDO. PENDIENTE-NEG: si tiene catalogo, resolver inline (I11)."},
+                {"column": "tipo_irregularidad", "comment": "codigo-descripcion desde FM_IRREGULARITY_TYPE (outer join: null si no parametrizada)."},
+                {"column": "id_solicitud", "comment": "FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_bronze.id_solicitud."},
+                {"column": "fecha_inicio_fraude", "comment": "Inicio de la ventana defraudada. Texto YYYY-MM-DD."},
+                {"column": "fecha_fin_fraude", "comment": "Fin de la ventana defraudada. Texto YYYY-MM-DD."},
+                {"column": "comentario", "comment": "FM_POSSIBLE_NTL.COMMENT_. Probable CLOB: database.py lo convierte a str (I10)."}
+            ]
         }
     ]
 

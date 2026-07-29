@@ -5,8 +5,12 @@
 # MAGIC (`CREATE TABLE IF NOT EXISTS`) las tablas del plano de control
 # MAGIC (`midas_control_cargas`, `midas_log_cargas`), la tabla de parámetros
 # MAGIC (`midas_parametros`) y **siembra** el control con `job_name = 'midas_bronze'`:
-# MAGIC 1 dimensión `QUERY_FULL_OVERWRITE` (matriz facturable) + 8 pasos `FULL_CHAINED`
-# MAGIC de la cadena (Caso 1) + 4 promociones `FULL_CHAINED` del Caso 2 (13 filas en total).
+# MAGIC 8 pasos `FULL_CHAINED` de la cadena (Caso 1) + 4 promociones `FULL_CHAINED` del
+# MAGIC Caso 2 (sin el roster, retirado en R2) + 1 de PNO (**12 filas**, todas `FULL_CHAINED`).
+# MAGIC
+# MAGIC > **v3 (2026-07-28):** ya NO hay dimensiones materializadas (invariante I11). La
+# MAGIC > matriz facturable se resuelve inline en `QUERY_DATOS_BASICOS`. La fila retirada se
+# MAGIC > **desactiva**, no se borra, para conservar la trazabilidad en `midas_log_cargas`.
 # MAGIC
 # MAGIC Reemplaza al antiguo seed manual en SQL (un único mecanismo
 # MAGIC canónico evita drift). Patrón **alineado con vera_framework**
@@ -112,6 +116,66 @@ else:
     print("job_name ya presente en midas_control_cargas (no se requiere ALTER)")
 
 # COMMAND ----------
+# ───── Migración guardada v3 (R3): columnas de periodo en las Bronze existentes ─────
+# insertInto es POSICIONAL. Si la query ya devuelve columnas nuevas y la tabla destino no
+# las tiene, la carga falla (o peor, escribiría corrido). Se agregan AL FINAL y en el MISMO
+# orden en que las proyecta cada query (invariante I13). Idempotente: solo agrega lo que falta.
+#
+# NUNCA usar saveAsTable con overwriteSchema aquí: destruye PK, NOT NULL y comentarios.
+#
+# ⚠ Los tipos numéricos asumen que el maestro (perifact/pericose) resuelve. Si alguna
+# subconsulta escalar devolviera NULL de forma masiva, pandas infiere float y el insertInto
+# podría chocar contra BIGINT. Es el mismo patrón que ya usa anio_facturacion en
+# consumos_producto (en producción desde el Caso 1), pero vigílalo en la primera corrida.
+_MIGRACION_V3 = {
+    # R1: matriz facturable inline (datos_basicos y su espejo servicios_contrato).
+    "midas_datos_basicos_producto_bronze": [
+        ("estado_corte_facturable", "STRING"), ("estado_corte_facturable_desc", "STRING"),
+    ],
+    # R3: traduccion de periodos.
+    "midas_datos_lecturas_producto_bronze": [
+        ("anio_facturacion", "BIGINT"), ("mes_facturacion", "BIGINT"),
+        ("ciclo_facturacion", "BIGINT"),
+    ],
+    "midas_datos_consumos_producto_bronze": [
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+    ],
+    "midas_datos_ordenes_previa_critica_bronze": [
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+    ],
+    "midas_datos_cuentas_cobro_bronze": [
+        ("id_periodo_consumo", "BIGINT"),
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+    ],
+    "midas_datos_detalle_cargos_bronze": [
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+        ("anio_facturacion", "BIGINT"), ("mes_facturacion", "BIGINT"),
+    ],
+    "midas_datos_consumos_contrato_bronze": [
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+        ("anio_facturacion", "BIGINT"), ("mes_facturacion", "BIGINT"),
+    ],
+    "midas_datos_investigacion_consumo_bronze": [
+        ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
+    ],
+}
+
+for tabla, columnas in _MIGRACION_V3.items():
+    full = f"{CATALOG}.{SCHEMA}.{tabla}"
+    if not spark.catalog.tableExists(full):
+        # Aún no existe: la crea ingestion.py en la primera corrida, ya con el schema nuevo.
+        print(f"--  {tabla}: no existe todavía, la creará ingestion.py (sin ALTER)")
+        continue
+    existentes = [f.name for f in spark.table(full).schema.fields]
+    faltantes = [(c, t) for (c, t) in columnas if c not in existentes]
+    if not faltantes:
+        print(f"OK  {tabla}: columnas de periodo ya presentes")
+        continue
+    cols_sql = ", ".join(f"{c} {t}" for c, t in faltantes)
+    spark.sql(f"ALTER TABLE {full} ADD COLUMNS ({cols_sql})")
+    print(f"OK  {tabla}: +{[c for c, _ in faltantes]}")
+
+# COMMAND ----------
 # ───── Bootstrap del control (Caso 1 + Caso 2) ─────
 # Un solo seed metadata-driven. tipo_carga:
 #   QUERY_FULL_OVERWRITE = dimensiones de catálogo (se recargan completas a diario).
@@ -120,11 +184,8 @@ else:
 # en WHEN MATCHED; `comentarios` (edición manual) solo se toca en el INSERT.
 # SEED: (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
 SEED = [
-    # ── ÚNICA dimensión materializada (Caso 2) — orden 1 ──
-    # Los demás catálogos NO se materializan: se resuelven inline en las queries
-    # (patrón del Caso 1). Esta es una MATRIZ DE DECISIÓN (S/N por estado × servicio)
-    # que el agente consulta como regla y necesita COMPLETA.
-    ("midas_dim_estado_corte_facturable_bronze", "QUERY_DIM_ESTADO_CORTE_FACTURABLE", "QUERY_FULL_OVERWRITE", 1, None),
+    # ── v3 R1: NO hay dimensiones. La matriz facturable se resuelve inline en
+    #    QUERY_DATOS_BASICOS (columnas estado_corte_facturable*). Invariante I11. ──
     # ── Cadena encadenada (Caso 1) — orden 11..18 ──
     ("midas_ordenes_calidad_pendientes_bronze",  "QUERY_ORDENES_PENDIENTES",    "FULL_CHAINED", 11, None),
     ("midas_datos_basicos_producto_bronze",      "QUERY_DATOS_BASICOS",         "FULL_CHAINED", 12, "instalacion"),
@@ -136,9 +197,10 @@ SEED = [
     ("midas_datos_detalle_cargos_bronze",        "QUERY_DETALLE_CARGOS",        "FULL_CHAINED", 18, "id_cuenta_cobro"),
     # ── Promociones (Caso 2) — orden 21..24 ──
     ("midas_datos_detalle_solicitudes_bronze",   "QUERY_DETALLE_SOLICITUDES",  "FULL_CHAINED", 21, "servicio_suscrito"),
-    ("midas_datos_servicios_contrato_bronze",    "QUERY_SERVICIOS_CONTRATO",   "FULL_CHAINED", 22, "contrato"),
     ("midas_datos_consumos_contrato_bronze",     "QUERY_CONSUMOS_CONTRATO",    "FULL_CHAINED", 23, "servicio_suscrito"),
     ("midas_datos_investigacion_consumo_bronze", "QUERY_INVESTIGACION_CONSUMO","FULL_CHAINED", 24, "servicio_suscrito"),
+    # ── v3 R4: Perdidas No Operacionales — orden 25 ──
+    ("midas_datos_perdidas_no_operacionales_bronze", "QUERY_PERDIDAS_NO_OPERACIONALES", "FULL_CHAINED", 25, "servicio_suscrito"),
 ]
 N_ESPERADO = len(SEED)  # fuente única de verdad para la verificación (no cablear dos veces)
 
@@ -199,9 +261,11 @@ _PADRES = [
     ("midas_datos_detalle_cargos_bronze",         "midas_datos_cuentas_cobro_bronze"),
     # ── Promociones Caso 2 ──
     ("midas_datos_detalle_solicitudes_bronze",    "midas_datos_basicos_producto_bronze"),
-    ("midas_datos_servicios_contrato_bronze",     "midas_datos_basicos_producto_bronze"),
-    ("midas_datos_consumos_contrato_bronze",      "midas_datos_servicios_contrato_bronze"),
+    # v3 R2: el padre de A3 ya no es el roster retirado, sino datos_basicos.
+    ("midas_datos_consumos_contrato_bronze",      "midas_datos_basicos_producto_bronze"),
     ("midas_datos_investigacion_consumo_bronze",  "midas_datos_basicos_producto_bronze"),
+    # v3 R4: PNO espeja el driver de A1 (mismo padre, mismo conjunto de SS).
+    ("midas_datos_perdidas_no_operacionales_bronze", "midas_datos_basicos_producto_bronze"),
 ]
 for hija, padre in _PADRES:
     spark.sql(f"""
@@ -212,6 +276,34 @@ for hija, padre in _PADRES:
         WHERE tabla_destino = '{hija}' AND job_name = '{JOB_NAME}'
     """)
 print("OK  query_padre_id resuelto para la cadena")
+
+# COMMAND ----------
+# ───── v3 R1: desactivar la carga retirada ─────
+# El MERGE del bootstrap solo hace INSERT/UPDATE: nunca borra filas huérfanas. Se DESACTIVAN
+# en vez de borrarlas para conservar la trazabilidad histórica en midas_log_cargas.
+#
+# Se retiran DOS: la dimensión de facturable (R1) y el roster del contrato (R2).
+# Sobre R2: el LEFT ANTI JOIN devolvió 782 SS, pero la verificación de seguimiento mostró que
+# pertenecen a 181 contratos que NO están ni en ordenes_pendientes ni en datos_basicos, es
+# decir eran residuo de corridas anteriores (A2 corre con abortar_en_fallo=False, así que
+# podía quedar estancada mientras datos_basicos sí se sobrescribía). No eran información nueva.
+_RETIRADAS_V3 = [
+    "midas_dim_estado_corte_facturable_bronze",   # R1: facturable resuelto inline
+    "midas_datos_servicios_contrato_bronze",      # R2: roster = datos_basicos filtrado por contrato
+]
+_in_retiradas = ", ".join(f"'{t}'" for t in _RETIRADAS_V3)
+spark.sql(f"""
+    UPDATE {CONTROL}
+       SET activa = false,
+           comentarios = 'Retirada en v3 (R1 facturable inline / R2 roster desde datos_basicos, 2026-07-28)',
+           fecha_modificacion = current_timestamp()
+     WHERE catalog_destino = '{CATALOG}'
+       AND schema_destino  = '{SCHEMA}'
+       AND job_name        = '{JOB_NAME}'
+       AND tabla_destino IN ({_in_retiradas})
+       AND activa = true
+""")
+print(f"OK  cargas desactivadas (si existían): {_RETIRADAS_V3}")
 
 # COMMAND ----------
 # ───── Verificación final (falla el task si algo no cuadra) ─────
@@ -271,6 +363,9 @@ _PARAMS = [
     ("consumo",    "metodo_calculo_facturado",    "4",       "INT", "cossmecc que representa consumo facturado"),
     ("ventana",    "ventana_meses_historia",      "6",       "INT", "meses de historia para consumos/investigacion"),
     ("ventana",    "ventana_meses_observaciones", "3",       "INT", "meses de historia para observaciones/critica"),
+    # v3 (reunion 2026-07-28): MIDAS v1 mira 8 periodos hacia atras y el analista usa ~6.
+    # Jonatan pidio explicitamente que sea parametrizable, no cableado.
+    ("ventana",    "ventana_periodos_analisis",   "8",       "INT", "periodos hacia atras que analiza el agente (v1 usa 8; el analista ~6)"),
 ]
 _prows = ",\n        ".join(
     f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)})"

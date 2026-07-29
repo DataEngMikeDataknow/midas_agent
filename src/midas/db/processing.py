@@ -18,10 +18,8 @@ _PARQUET_FILES = {
     "cuentas_cobro":         "datos_cuentas_cobro.parquet",
     "detalle_cargos":        "datos_detalle_cargos.parquet",
     "detalle_solicitudes":   "datos_detalle_solicitudes.parquet",
-    # ─── Caso 2: única dimensión materializada (matriz de decisión facturable) ───
-    "dim_estado_corte_facturable": "dim_estado_corte_facturable.parquet",
     # ─── Caso 2: promociones a la cadena ───
-    "servicios_contrato":    "datos_servicios_contrato.parquet",
+    "perdidas_no_operacionales": "perdidas_no_operacionales.parquet",
     "consumos_contrato":     "datos_consumos_contrato.parquet",
     "investigacion_consumo": "datos_investigacion_consumo.parquet",
 }
@@ -365,73 +363,58 @@ def _adaptar_solicitudes_a_bronze(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =============================================================================
-# CASO 2 — Dimensiones de referencia (catalogos, full overwrite sin iteracion)
-# =============================================================================
-
-def _run_dim(query: str, out_key: str, nombre: str) -> pd.DataFrame:
-    """Extrae un catalogo completo (full overwrite) y lo materializa a Parquet."""
-    log.info(f"--- Iniciando extracción dimensión: [{nombre}] ---")
-    df = db.execute_query(query)
-    if df.empty:
-        log.warning(f"Dimensión [{nombre}] no retornó filas.")
-    save_to_parquet(df, _out(out_key))
-    log.info(f"--- Dimensión [{nombre}] completada ({len(df)} filas) ---")
-    return df
-
-
-def run_query_dim_estado_corte_facturable() -> pd.DataFrame:
-    """Única dimensión materializada: matriz de decisión facturable (estado × servicio).
-    El resto de catálogos se resuelven INLINE en las queries (patrón del Caso 1)."""
-    return _run_dim(queries.QUERY_DIM_ESTADO_CORTE_FACTURABLE,
-                    "dim_estado_corte_facturable", "estado_corte_facturable")
-
-
-# =============================================================================
 # CASO 2 — Promociones: roster del contrato, consumos multi-servicio, investigacion
+#
+# v3 R1: ya no hay extractores de dimension. `_run_dim` se elimino junto con la ultima
+# dimension materializada (matriz facturable), que ahora se resuelve inline en
+# QUERY_DATOS_BASICOS. Invariante I11.
 # =============================================================================
 
-def run_query_servicios_contrato(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
-    """A2 — Todos los SS del contrato, iterando por los contratos de datos_basicos."""
-    log.info("--- Iniciando proceso extracción: [servicios_contrato] ---")
-    if df_datos_basicos is None or df_datos_basicos.empty:
-        log.warning("No hay datos_basicos para procesar. Saltando servicios_contrato.")
-        return pd.DataFrame()
-    if 'CONTRATO' not in df_datos_basicos.columns:
-        log.error("Columna 'CONTRATO' no encontrada en datos_basicos. Abortando servicios_contrato.")
-        return pd.DataFrame()
+def run_query_consumos_contrato(df_datos_basicos: pd.DataFrame,
+                                df_ordenes_pendientes: pd.DataFrame) -> pd.DataFrame:
+    """A3 (v3 R2) — Consumos (6m) de los SS hermanos del contrato.
 
-    unique_contratos = df_datos_basicos['CONTRATO'].dropna().unique()
-    all_res = []
-    log.info(f"Iterando {len(unique_contratos)} contratos para servicios_contrato...")
-    for contrato in unique_contratos:
-        params = {'p_contrato': int(contrato)}
-        df_row = db.execute_query(queries.QUERY_SERVICIOS_CONTRATO, params)
-        if not df_row.empty:
-            all_res.append(df_row)
+    Antes iteraba sobre `midas_datos_servicios_contrato_bronze`. Esa tabla se retiró:
+    los datos básicos ya contienen los SS y el roster se obtiene FILTRANDO por contrato.
 
-    if not all_res:
-        log.warning("servicios_contrato no retornó resultados para ninguna iteración.")
-        return pd.DataFrame()
+    El filtro por CONTRATO es deliberado y NO debe reemplazarse por "todos los SS de la
+    instalación": la instalación es un superconjunto que traería SS de contratos ajenos
+    (otros clientes del mismo predio), lo que inflaría el volumen y contaminaría el
+    análisis multi-servicio del Caso 13.
 
-    df_final = pd.concat(all_res, ignore_index=True)
-    save_to_parquet(df_final, _out("servicios_contrato"))
-    log.info("--- Proceso extracción: [servicios_contrato] Completado ---")
-    return df_final
-
-
-def run_query_consumos_contrato(df_servicios_contrato: pd.DataFrame) -> pd.DataFrame:
-    """A3 — Consumos (6m) de cada SS del roster del contrato."""
+    Efecto colateral valioso: al desaparecer la tabla intermedia desaparece también la
+    posibilidad de que A3 itere sobre un roster ESTANCADO de una corrida anterior (A2
+    corría con abortar_en_fallo=False, así que podía quedar desactualizada mientras
+    datos_basicos sí se sobrescribía).
+    """
     log.info("--- Iniciando proceso extracción: [consumos_contrato] ---")
-    if df_servicios_contrato is None or df_servicios_contrato.empty:
-        log.warning("No hay servicios_contrato para procesar. Saltando consumos_contrato.")
+    if df_datos_basicos is None or df_datos_basicos.empty:
+        log.warning("No hay datos_basicos para procesar. Saltando consumos_contrato.")
         return pd.DataFrame()
-    if 'SERVICIO_SUSCRITO' not in df_servicios_contrato.columns:
-        log.error("Columna 'SERVICIO_SUSCRITO' no encontrada en servicios_contrato. Abortando.")
-        return pd.DataFrame()
+    for col in ('SERVICIO_SUSCRITO', 'CONTRATO'):
+        if col not in df_datos_basicos.columns:
+            log.error("Columna '%s' no encontrada en datos_basicos. Abortando consumos_contrato.", col)
+            return pd.DataFrame()
 
-    unique_ss = df_servicios_contrato['SERVICIO_SUSCRITO'].dropna().unique()
+    # Contratos "de las órdenes": los de los SS que efectivamente generaron una orden.
+    if df_ordenes_pendientes is not None and not df_ordenes_pendientes.empty             and 'SERVICIO_SUSCRITO' in df_ordenes_pendientes.columns:
+        ss_ordenes = set(df_ordenes_pendientes['SERVICIO_SUSCRITO'].dropna().astype('int64'))
+        contratos = (df_datos_basicos[df_datos_basicos['SERVICIO_SUSCRITO'].isin(ss_ordenes)]
+                     ['CONTRATO'].dropna().unique())
+    else:
+        # Sin órdenes no hay a qué acotar: se usan todos los contratos de datos_basicos.
+        log.warning("Sin órdenes pendientes: se usan todos los contratos de datos_basicos.")
+        contratos = df_datos_basicos['CONTRATO'].dropna().unique()
+
+    unique_ss = (df_datos_basicos[df_datos_basicos['CONTRATO'].isin(contratos)]
+                 ['SERVICIO_SUSCRITO'].dropna().unique())
+
+    # Reporte pedido en §3.3: cuánto ahorra acotar por contrato en vez de por instalación.
+    total_instalacion = df_datos_basicos['SERVICIO_SUSCRITO'].dropna().nunique()
+    log.info("consumos_contrato: %d SS por contrato vs %d SS por instalación (%d contratos).",
+             len(unique_ss), total_instalacion, len(contratos))
+
     all_res = []
-    log.info(f"Iterando {len(unique_ss)} SS del contrato para consumos_contrato...")
     for ss in unique_ss:
         params = {'p_servicio_suscrito': int(ss)}
         df_row = db.execute_query(queries.QUERY_CONSUMOS_CONTRATO, params)
@@ -474,4 +457,51 @@ def run_query_investigacion_consumo(df_datos_basicos: pd.DataFrame) -> pd.DataFr
     df_final = pd.concat(all_res, ignore_index=True)
     save_to_parquet(df_final, _out("investigacion_consumo"))
     log.info("--- Proceso extracción: [investigacion_consumo] Completado ---")
+    return df_final
+
+
+# =============================================================================
+# R4 (v3) — Perdidas No Operacionales
+# =============================================================================
+def run_query_perdidas_no_operacionales(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
+    """PNO por servicio suscrito.
+
+    ESPEJA exactamente el paso A1 (detalle_solicitudes, §5.5 del prompt v3): mismo conjunto
+    de SS (los de datos_basicos) y mismo mecanismo de iteracion. No se inventa un driver.
+
+    A diferencia de A1, la query SI proyecta `normalized_prod_id` como servicio_suscrito,
+    asi que NO hay que insertar la columna del bind.
+    """
+    log.info("--- Iniciando proceso extracción: [perdidas_no_operacionales] ---")
+    if df_datos_basicos is None or df_datos_basicos.empty:
+        log.warning("No hay datos en datos_basicos para procesar. Saltando PNO.")
+        return pd.DataFrame()
+
+    if 'SERVICIO_SUSCRITO' not in df_datos_basicos.columns:
+        log.error("Columna 'SERVICIO_SUSCRITO' no encontrada. Abortando PNO.")
+        return pd.DataFrame()
+
+    unique_servicios = df_datos_basicos['SERVICIO_SUSCRITO'].dropna().unique()
+
+    all_results = []
+    log.info(f"Iterando {len(unique_servicios)} servicios para ejecutar Query PNO...")
+
+    for servicio_suscrito in unique_servicios:
+        params = {'p_servicio_suscrito': int(servicio_suscrito)}
+        df_row = db.execute_query(queries.QUERY_PERDIDAS_NO_OPERACIONALES, params)
+        if not df_row.empty:
+            all_results.append(df_row)
+
+    if not all_results:
+        log.warning("Query PNO no retornó resultados para ninguna iteración.")
+        return pd.DataFrame()
+
+    df_final = pd.concat(all_results, ignore_index=True)
+    # Verificacion §5.4.4: volumen, para dimensionar si hace falta ventana temporal.
+    log.info("PNO: %d filas sobre %d SS distintos (de %d SS iterados).",
+             len(df_final),
+             df_final['SERVICIO_SUSCRITO'].nunique() if 'SERVICIO_SUSCRITO' in df_final.columns else -1,
+             len(unique_servicios))
+    save_to_parquet(df_final, _out("perdidas_no_operacionales"))
+    log.info("--- Proceso extracción: [perdidas_no_operacionales] Completado ---")
     return df_final
