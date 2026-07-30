@@ -186,6 +186,23 @@ def run_query_ordenes_critica_previa(df_datos_lectura: pd.DataFrame) -> pd.DataF
         return pd.DataFrame()
 
     df_ordenes_critica_previa_final = pd.concat(all_results_ordenes_critica_previa, ignore_index=True)
+
+    # Deduplicacion OBLIGATORIA por la rama 4 (orden de decision del analista, 7400027).
+    # Este bucle itera (periodo_facturacion, SS, tipocons). Las ramas 1-3 filtran por
+    # :p_tipo_consumo, asi que nunca repiten entre iteraciones. La rama 4 NO puede filtrar
+    # por tipo (la orden de decision no expone uno), de modo que un SS con activa Y reactiva
+    # en el mismo periodo la devuelve una vez por cada tipo. El UNION de Oracle deduplica
+    # DENTRO de una llamada; pd.concat entre llamadas no.
+    # Detectado en dllo el 2026-07-30: 27 filas para 26 ordenes distintas.
+    # Es seguro para las ramas 1-3: dos filas identicas en las 12 columnas son el mismo
+    # hecho, no dos hechos distintos.
+    antes = len(df_ordenes_critica_previa_final)
+    df_ordenes_critica_previa_final = df_ordenes_critica_previa_final.drop_duplicates(
+        ignore_index=True)
+    if antes != len(df_ordenes_critica_previa_final):
+        log.info("Critica: %d filas duplicadas eliminadas (rama 4 sin filtro de tipo_consumo).",
+                 antes - len(df_ordenes_critica_previa_final))
+
     save_to_parquet(df_ordenes_critica_previa_final, _out("ordenes_critica_previa"))
     log.info("--- Proceso extracción: [datos_ordenes_previa_critica] Completado ---")
     return df_ordenes_critica_previa_final

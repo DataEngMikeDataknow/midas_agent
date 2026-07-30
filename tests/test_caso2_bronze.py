@@ -266,6 +266,65 @@ class TestRama4DecisionAnalista(unittest.TestCase):
         self.assertIn("midas_datos_ordenes_previa_critica_bronze", cfg)
 
 
+class TestCriticaDeduplicaLaRama4(unittest.TestCase):
+    """La rama 4 no filtra por tipo_consumo (la orden de decision no expone uno), asi que
+    un SS con activa Y reactiva en el mismo periodo la devuelve una vez por cada tipo.
+    El UNION de Oracle deduplica DENTRO de una llamada; pd.concat entre llamadas no.
+    Detectado en dllo el 2026-07-30: 27 filas para 26 ordenes distintas."""
+
+    def test_elimina_la_fila_repetida(self):
+        import pandas as pd
+        lecturas = pd.DataFrame([
+            # Mismo SS y mismo periodo de facturacion, dos tipos de consumo distintos:
+            # dos iteraciones que devolveran la MISMA orden de decision.
+            {"ID_PERIODO_FACTURACION": 1476, "SERVICIO_SUSCRITO": 90858173, "TIPOCONS": 3},
+            {"ID_PERIODO_FACTURACION": 1476, "SERVICIO_SUSCRITO": 90858173, "TIPOCONS": 6},
+        ])
+        fila_decision = {
+            "ID_ORDEN": 638644863, "SERVICIO_SUSCRITO": 90858173, "TIPO_CONSUMO": None,
+            "ID_PERIODO_CONSUMO": 1210132993, "TIPO_TRABAJO": "10038-ORDEN DECISION ANALISTA",
+            "ACTIVIDAD": "7400027-ORDEN DECISIÓN ANALISTA",
+            "FECHA_CREACION_ORDEN": "2026-02-26 16:03:28",
+            "FECHA_LEGALIZACION_ORDEN": "2026-03-17 10:58:38",
+            "ESTADO": "8-Cerrada", "ANALISTA_LEGALIZA": "ELI",
+            "FECHA_INI_CONSUMO": "2026-02-10", "FECHA_FIN_CONSUMO": "2026-03-10",
+        }
+        original = processing.db.execute_query
+        processing.db.execute_query = lambda sql, params=None: pd.DataFrame([fila_decision])
+        guardado = {}
+        original_save = processing.save_to_parquet
+        processing.save_to_parquet = lambda df, path: guardado.update(df=df)
+        try:
+            out = processing.run_query_ordenes_critica_previa(lecturas)
+        finally:
+            processing.db.execute_query = original
+            processing.save_to_parquet = original_save
+
+        self.assertEqual(len(out), 1, "la orden de decision quedo duplicada")
+        self.assertEqual(len(guardado["df"]), 1, "el Parquet se escribio con duplicados")
+
+    def test_no_colapsa_filas_legitimamente_distintas(self):
+        """Dos ordenes distintas del mismo SS deben sobrevivir ambas."""
+        import pandas as pd
+        lecturas = pd.DataFrame([
+            {"ID_PERIODO_FACTURACION": 1476, "SERVICIO_SUSCRITO": 1, "TIPOCONS": 3},
+        ])
+        filas = pd.DataFrame([
+            {"ID_ORDEN": 1, "SERVICIO_SUSCRITO": 1, "TIPO_CONSUMO": "3-ACTIVA"},
+            {"ID_ORDEN": 2, "SERVICIO_SUSCRITO": 1, "TIPO_CONSUMO": "3-ACTIVA"},
+        ])
+        original = processing.db.execute_query
+        original_save = processing.save_to_parquet
+        processing.db.execute_query = lambda sql, params=None: filas
+        processing.save_to_parquet = lambda df, path: None
+        try:
+            out = processing.run_query_ordenes_critica_previa(lecturas)
+        finally:
+            processing.db.execute_query = original
+            processing.save_to_parquet = original_save
+        self.assertEqual(len(out), 2)
+
+
 class TestComentariosToleraTipoConsumoNulo(unittest.TestCase):
     """La rama 4 devuelve tipo_consumo NULL. Sin guarda, `.split('-')` lanzaria
     AttributeError y, como el paso de comentarios corre con abortar_en_fallo=True,
