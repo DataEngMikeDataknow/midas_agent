@@ -162,6 +162,15 @@ era la última y ahora se resuelve inline en `QUERY_DATOS_BASICOS`
 [scripts/migracion_v3_limpieza.sql](scripts/migracion_v3_limpieza.sql) y **se ejecuta a mano**,
 ambiente por ambiente.
 
+La **orden de decisión del analista** (`activity 7400027` / `task_type 10038`) es el
+*ground truth* del agente. **No tiene tabla propia:** es la misma pantalla "Órdenes de Crítica
+y Previa" y las mismas columnas, así que llega por la **rama 4** de
+`QUERY_ORDENES_CRITICA_PEVIA` a `midas_datos_ordenes_previa_critica_bronze`, y sus comentarios
+fluyen solos hacia `cometarios_ordenes`.
+
+> ⚠️ Es la **única excepción** al criterio de "cero filas de diferencia" en el Caso 1: esas
+> dos tablas suman filas a propósito. Las otras seis deben quedar idénticas.
+
 **Tampoco hay tablas espejo** (invariante I12, v3 R2): `midas_datos_servicios_contrato_bronze`
 se retiró porque solo cambiaba el filtro respecto a `datos_basicos`. El roster de un contrato
 se obtiene filtrando: `WHERE contrato = (SELECT contrato FROM ... WHERE servicio_suscrito = :ss)`.

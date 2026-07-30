@@ -135,6 +135,8 @@ def ejecutar_cadena_extraccion(processing_module, control: ControlCargasClient) 
         control, *PASO_CONSUMOS,
         fn=lambda: processing_module.run_query_datos_consumos(df_lecturas),
     )
+    # Incluye la RAMA 4 (orden de decision del analista, 7400027): misma tabla, misma
+    # pantalla, filas que antes excluia el filtro activity_id = 102010.
     df_critica, _ = _ejecutar_paso(
         control, *PASO_ORDENES_CRITICA,
         fn=lambda: processing_module.run_query_ordenes_critica_previa(df_lecturas),

@@ -87,8 +87,10 @@ def build_tables_config(source_volume_path: str) -> list:
             "name": "midas_datos_ordenes_previa_critica_bronze",
             "path": f"{source_volume_path}/datos_ordenes_previa_critica.parquet",
             "primary_key": "id_orden",
-            "description": "Órdenes de crítica y previa.",
+            "description": "Órdenes de crítica y previa. Incluye la orden de decisión del analista (activity 7400027).",
             "column_comments": [
+                {"column": "actividad", "comment": "102010 critica de consumo o 7400027 ORDEN DECISION ANALISTA (rama 4). Filtra por prefijo, no por igualdad."},
+                {"column": "tipo_consumo", "comment": "NULL en las filas de decision del analista: esa orden no expone tipo de consumo propio."},
                 {"column": "fecha_ini_consumo", "comment": "R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD."},
                 {"column": "fecha_fin_consumo", "comment": "R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD."}
             ]

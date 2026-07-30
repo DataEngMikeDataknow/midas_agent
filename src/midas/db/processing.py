@@ -203,6 +203,8 @@ def run_query_comentarios_ordenes(df_ordenes_critica_previa: pd.DataFrame):
         log.error(f"Columnas requeridas {required_cols} no encontradas en Q5. Abortando.")
         return
 
+    # dropna SOLO sobre ID_ORDEN: la rama 4 trae tipo_consumo NULL y no se puede
+    # descartar por eso (perderiamos las ordenes de decision del analista).
     unique_combos = df_ordenes_critica_previa[required_cols].drop_duplicates().dropna(subset=['ID_ORDEN'])
 
     all_results_cometario_ordenes = []
@@ -213,11 +215,20 @@ def run_query_comentarios_ordenes(df_ordenes_critica_previa: pd.DataFrame):
         if pd.isna(fecha_legalizacion):
             fecha_legalizacion = None
 
+        # La rama 4 (orden de decision del analista, 7400027) no expone tipo de consumo:
+        # llega NULL. Sin esta guarda, `.split('-')` lanzaria AttributeError y como este
+        # paso corre con abortar_en_fallo=True, tumbaria la cadena ENTERA del Caso 1.
+        tipo_consumo = row.TIPO_CONSUMO
+        if tipo_consumo is None or pd.isna(tipo_consumo):
+            tipo_consumo_cod = None
+        else:
+            tipo_consumo_cod = str(tipo_consumo).split('-')[0]
+
         params = {
             'p_id_orden': row.ID_ORDEN,
             'p_servicio_suscrito': row.SERVICIO_SUSCRITO,
             'p_id_periodo_consumo': row.ID_PERIODO_CONSUMO,
-            'p_tipo_consumo': row.TIPO_CONSUMO.split('-')[0],
+            'p_tipo_consumo': tipo_consumo_cod,
             'p_fecha_creacion': row.FECHA_CREACION_ORDEN,
             'p_fecha_legalizacion': fecha_legalizacion
         }

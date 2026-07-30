@@ -297,6 +297,52 @@ UNION
       AND o.order_id = oa.order_id
       AND oa.task_type_id in (769,803,807,10037,767,768,769,770,803,804,805,747,748,749,750,751,752,764,778,781) -- (Lista de IDs)
 )
+UNION
+-- RAMA 4 — ORDEN DECISION ANALISTA (activity 7400027, equivale a task_type 10038).
+--
+-- Es la resolucion que escribe el analista al cerrar: el ground truth del agente. Es la
+-- MISMA pantalla de "Ordenes de Critica y Previa" y las MISMAS columnas; simplemente el
+-- filtro `activity_id = 102010` de la rama 1 la dejaba afuera. Verificado en Oracle
+-- (2026-07-29): ninguna orden tiene a la vez 102010 y 7400027, asi que nunca aparecia.
+--
+-- No se engancha a cm_ordecrit ni a PE_INVEST_CONSUM: se ataca directo por
+-- or_order_activity.product_id. Depender de `oa.package_id = p.investigate_request`
+-- (ramas 2 y 3) supondria que toda decision cuelga de una solicitud de investigacion,
+-- cosa que no esta verificada.
+--
+-- La ventana `o.created_date between pefafimo and pefaffmo` NO es decorativa: sin ella la
+-- misma orden se repetiria en cada una de las ~8 iteraciones de periodo que hace
+-- processing.run_query_ordenes_critica_previa. Mismo patron que ya usa la rama 3 con
+-- p.register_date. Efecto lateral asumido: solo llegan las decisiones creadas dentro de
+-- los periodos de facturacion analizados.
+SELECT
+    o.order_id id_orden,
+    oa.product_id servicio_suscrito,
+    -- La orden de decision no expone tipo de consumo propio. Bronze es replica fiel:
+    -- NULL = desconocido, no se fabrica el valor de la iteracion en curso.
+    CAST(NULL AS VARCHAR2(200)) tipo_consumo,
+    periodo.pecscons id_periodo_consumo,
+    (select tt.task_type_id||'-'||tt.description from or_task_type tt where tt.task_type_id = o.task_type_id) Tipo_Trabajo,
+    (select items_id||'-'||description from ge_items where items_id = oa.activity_id) Actividad,
+    to_char(o.created_date, 'YYYY-MM-DD HH24:MI:SS') fecha_creacion_orden,
+    to_char(o.legalization_date, 'YYYY-MM-DD HH24:MI:SS') fecha_legalizacion_orden,
+    (select os.order_status_id||'-'||os.description from or_order_status os where os.order_status_id = o.order_status_id) estado,
+    (select name_
+     from or_order_stat_change osc, ge_person pe, sa_user u
+     where pe.user_id = u.user_id
+       and u.mask = osc.user_id
+       and o.order_id = osc.order_id
+       and 5 = osc.initial_status_id
+       and 8 = osc.final_status_id) analista_legaliza,
+    -- Alias OBLIGATORIO en pericose: sin el, `pecscons = pecscons` compara la columna
+    -- consigo misma, devuelve toda la tabla y revienta con ORA-01427.
+    (select to_char(pc.pecsfeci, 'YYYY-MM-DD') from pericose pc where pc.pecscons = periodo.pecscons) fecha_ini_consumo,
+    (select to_char(pc.pecsfecf, 'YYYY-MM-DD') from pericose pc where pc.pecscons = periodo.pecscons) fecha_fin_consumo
+FROM or_order_activity oa, or_order o, periodo
+WHERE oa.product_id = :p_servicio_suscrito --{Argumento 8 - servicio suscrito}
+  AND o.order_id = oa.order_id
+  AND oa.activity_id = 7400027
+  AND o.created_date between pefafimo and pefaffmo
 ORDER BY fecha_creacion_orden desc
 """
 

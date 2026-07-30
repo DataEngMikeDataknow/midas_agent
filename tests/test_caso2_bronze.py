@@ -76,7 +76,8 @@ class TestTablesConfig(unittest.TestCase):
         self.by_name = {c["name"]: c for c in self.cfg}
 
     def test_conteo_total(self):
-        # 8 cadena + 3 promociones + 1 PNO = 12. Objetivo de la v3 alcanzado.
+        # 8 cadena + 3 promociones + 1 PNO = 12. La orden de decision del analista NO
+        # agrega tablas: es la rama 4 de QUERY_ORDENES_CRITICA_PEVIA.
         self.assertEqual(len(self.cfg), 12)
 
     def test_tablas_retiradas_no_estan(self):
@@ -151,11 +152,12 @@ class TestR3TraduccionPeriodos(unittest.TestCase):
             for col in columnas:
                 self.assertIn(col, sql, f"{nombre} no expone {col}")
 
-    def test_critica_agrega_en_las_tres_ramas(self):
-        """El UNION exige el MISMO numero de columnas en las 3 ramas."""
+    def test_critica_agrega_en_todas_las_ramas(self):
+        """El UNION exige el MISMO numero de columnas en TODAS las ramas.
+        Eran 3; con la rama 4 (decision del analista, 7400027) son 4."""
         sql = queries.QUERY_ORDENES_CRITICA_PEVIA
-        self.assertEqual(sql.count("fecha_ini_consumo"), 3)
-        self.assertEqual(sql.count("fecha_fin_consumo"), 3)
+        self.assertEqual(sql.count("fecha_ini_consumo"), 4)
+        self.assertEqual(sql.count("fecha_fin_consumo"), 4)
 
     def test_sin_inner_join_a_los_maestros(self):
         """§4.4: subconsulta escalar o (+), nunca inner join contra pericose/perifact:
@@ -191,6 +193,125 @@ class TestR4PerdidasNoOperacionales(unittest.TestCase):
         """El original venia con ||'' - ''|| por ser literal PL/SQL."""
         self.assertNotIn("|| - ||", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
         self.assertIn("||'-'||", queries.QUERY_PERDIDAS_NO_OPERACIONALES)
+
+
+class TestRama4DecisionAnalista(unittest.TestCase):
+    """RAMA 4 de QUERY_ORDENES_CRITICA_PEVIA: la orden de decision del analista (7400027).
+
+    Es la MISMA pantalla y las MISMAS columnas de "Ordenes de Critica y Previa"; el filtro
+    `activity_id = 102010` de la rama 1 la dejaba afuera. Verificado en Oracle (2026-07-29):
+    ninguna orden tiene a la vez 102010 y 7400027, asi que nunca aparecia en la rejilla.
+    NO hace falta ninguna tabla nueva.
+    """
+
+    def test_la_rama_existe(self):
+        self.assertIn("7400027", queries.QUERY_ORDENES_CRITICA_PEVIA)
+
+    def test_cuatro_ramas_con_las_mismas_columnas_de_periodo(self):
+        """El UNION exige el MISMO numero de columnas en TODAS las ramas."""
+        sql = queries.QUERY_ORDENES_CRITICA_PEVIA
+        self.assertEqual(sql.count("fecha_ini_consumo"), 4)
+        self.assertEqual(sql.count("fecha_fin_consumo"), 4)
+
+    def test_binds_completos(self):
+        """periodo(1) + rama1(2) + rama2(2) + rama3(2) + rama4(1) = 8 marcadores."""
+        prep, vals = database._prepare(
+            queries.QUERY_ORDENES_CRITICA_PEVIA,
+            {"p_id_periodo_facturacion": 1476, "p_servicio_suscrito": 90858173,
+             "p_tipo_consumo": 3})
+        self.assertEqual(prep.count("?"), 8)
+        self.assertEqual(vals, [1476, 90858173, 3, 90858173, 3, 90858173, 3, 90858173])
+
+    def test_rama4_acotada_por_la_ventana_del_periodo(self):
+        """Sin la ventana, la misma orden se repetiria en cada iteracion de periodo
+        (~8 por SS). Mismo patron que ya usa la rama 3 con register_date."""
+        self.assertIn("o.created_date between pefafimo and pefaffmo",
+                      queries.QUERY_ORDENES_CRITICA_PEVIA)
+
+    @staticmethod
+    def _rama4_sin_comentarios():
+        """El SQL de la rama 4, sin lineas de comentario: estas citan
+        `investigate_request` justamente para explicar por que NO se usa."""
+        import re
+        sql = queries.QUERY_ORDENES_CRITICA_PEVIA
+        rama4 = sql[sql.index("RAMA 4"):]
+        return re.sub("--.*", "", rama4)
+
+    def test_rama4_no_depende_de_investigacion(self):
+        """Se ataca directo por or_order_activity.product_id: enganchar la decision a
+        `oa.package_id = p.investigate_request` supondria que toda decision cuelga de una
+        solicitud de investigacion, cosa NO verificada."""
+        rama4 = self._rama4_sin_comentarios()
+        self.assertNotIn("investigate_request", rama4)
+        self.assertIn("oa.product_id = :p_servicio_suscrito", rama4)
+
+    def test_pericose_aliasado_en_la_rama4(self):
+        """`pecscons = pecscons` seria una tautologia -> ORA-01427."""
+        rama4 = self._rama4_sin_comentarios()
+        self.assertIn("pc.pecscons = periodo.pecscons", rama4)
+        self.assertNotIn("where pecscons = pecscons", rama4)
+
+    def test_no_se_crearon_tablas_nuevas(self):
+        """El arreglo es una rama mas en una tabla que ya existe."""
+        for nombre in ("QUERY_ORDENES_DECISION_ANALISTA", "QUERY_COMENTARIOS_DECISION"):
+            self.assertFalse(hasattr(queries, nombre), f"quedo {nombre}")
+        for tabla in ("midas_datos_ordenes_decision_analista_bronze",
+                      "midas_datos_comentarios_decision_bronze"):
+            self.assertNotIn(tabla, mi._QUERY_KEY, f"quedo la carga {tabla}")
+
+    def test_critica_conserva_sus_12_columnas(self):
+        """La rama 4 NO agrega columnas: el schema de la Bronze no cambia."""
+        import src.midas.main_ingestion as _mi
+        cfg = {c["name"]: c for c in _mi.build_tables_config("/vol")}
+        self.assertIn("midas_datos_ordenes_previa_critica_bronze", cfg)
+
+
+class TestComentariosToleraTipoConsumoNulo(unittest.TestCase):
+    """La rama 4 devuelve tipo_consumo NULL. Sin guarda, `.split('-')` lanzaria
+    AttributeError y, como el paso de comentarios corre con abortar_en_fallo=True,
+    tumbaria la cadena ENTERA del Caso 1."""
+
+    def test_no_revienta_con_tipo_consumo_nulo(self):
+        import pandas as pd
+        df = pd.DataFrame([{
+            "ID_ORDEN": 648518072, "SERVICIO_SUSCRITO": 90858173,
+            "ID_PERIODO_CONSUMO": 1210133131, "TIPO_CONSUMO": None,
+            "FECHA_CREACION_ORDEN": "2026-01-01 00:00:00",
+            "FECHA_LEGALIZACION_ORDEN": "2026-01-02 00:00:00",
+        }])
+        capturados = []
+        original = processing.db.execute_query
+
+        def _fake(sql, params=None):
+            capturados.append(params)
+            return pd.DataFrame()
+
+        processing.db.execute_query = _fake
+        try:
+            processing.run_query_comentarios_ordenes(df)   # no debe lanzar
+        finally:
+            processing.db.execute_query = original
+
+        self.assertEqual(len(capturados), 1)
+        self.assertIsNone(capturados[0]["p_tipo_consumo"])
+
+    def test_conserva_el_codigo_cuando_si_hay_tipo(self):
+        import pandas as pd
+        df = pd.DataFrame([{
+            "ID_ORDEN": 1, "SERVICIO_SUSCRITO": 2, "ID_PERIODO_CONSUMO": 3,
+            "TIPO_CONSUMO": "3-ENERGIA ACTIVA",
+            "FECHA_CREACION_ORDEN": "2026-01-01 00:00:00",
+            "FECHA_LEGALIZACION_ORDEN": None,
+        }])
+        capturados = []
+        original = processing.db.execute_query
+        processing.db.execute_query = lambda sql, params=None: (
+            capturados.append(params) or pd.DataFrame())
+        try:
+            processing.run_query_comentarios_ordenes(df)
+        finally:
+            processing.db.execute_query = original
+        self.assertEqual(capturados[0]["p_tipo_consumo"], "3")
 
 
 # Lista oficial de facturable (confesco), entregada por negocio (prompt v2 §1.4).
