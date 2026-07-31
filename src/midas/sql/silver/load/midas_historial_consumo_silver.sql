@@ -112,7 +112,7 @@ SELECT
     COUNT(*) OVER w_grano                                                                AS n_filas_grano,
     '{run_id}'          AS run_id,
     CURRENT_TIMESTAMP() AS fecha_carga_silver
-FROM base
+FROM base AS b
 WINDOW
     w_grano   AS (PARTITION BY servicio_suscrito, id_periodo_consumo, tipo_consumo_cod, medidor),
     w_periodo AS (PARTITION BY servicio_suscrito, id_periodo_consumo, tipo_consumo_cod)

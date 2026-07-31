@@ -64,6 +64,31 @@ class TestArchivosSql(unittest.TestCase):
         self.assertIn(";", ddl, "el caso de regresión perdió su punto y coma")
         self.assertNotIn(";", sql_desnudo(ddl))
 
+    def test_toda_estrella_calificada_tiene_su_alias(self):
+        """REGRESIÓN (dllo, 2026-07-31): `SELECT b.*` con `FROM base` sin alias.
+
+        No es un parser de SQL: solo verifica los `alias.*`, que es donde el error se
+        paga caro. Un alias mal escrito en una columna suelta lo atrapa el analyzer
+        rápido; un `x.*` inexistente tumba el objeto entero y a todos sus hijos."""
+        palabras = {"select", "from", "where", "join", "left", "right", "inner", "outer",
+                    "on", "and", "or", "group", "order", "by", "as", "when", "then",
+                    "else", "end", "case", "over", "partition", "window", "insert",
+                    "overwrite", "table", "into", "name", "create", "replace", "view",
+                    "not", "null", "is", "in", "using", "distinct", "having", "cross"}
+        for ruta in SQL_DIR.rglob("*.sql"):
+            cod = _codigo(ruta.read_text(encoding="utf-8"))
+            definidos = {m.lower() for m in
+                         re.findall(r"(?:^|[\s,(])(\w+)\s+AS\s*\(", cod, re.I | re.M)}
+            for m in re.finditer(r"\b(?:FROM|JOIN)\s+([\w{}.]+)(?:\s+(?:AS\s+)?(\w+))?",
+                                 cod, re.I):
+                definidos.add(m.group(1).split(".")[-1].lower())
+                if m.group(2) and m.group(2).lower() not in palabras:
+                    definidos.add(m.group(2).lower())
+            for calificador in {m.lower() for m in re.findall(r"\b(\w+)\.\*", cod)}:
+                with self.subTest(ruta=ruta.name, alias=calificador):
+                    self.assertIn(calificador, definidos,
+                                  f"{ruta.name}: usa `{calificador}.*` sin definirlo")
+
     def test_placeholders_con_nombre_valido(self):
         """Una llave literal sin duplicar reventaría en runtime dentro del cluster."""
         patron = re.compile(r"\{([^}]*)\}")

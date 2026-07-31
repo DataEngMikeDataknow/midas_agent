@@ -221,6 +221,20 @@ class SilverTransformer:
                 )
                 log.info("[%s] EXITOSO (%s)", tabla, "vista" if n is None else f"{n} filas")
             except Exception as exc:  # noqa: BLE001
+                # Spark reporta "does not support CREATE OR REPLACE VIEW" cuando el
+                # nombre ya existe como TABLA. El mensaje no dice qué hacer, y quien
+                # lo lea seis meses después no va a deducirlo: se explica aquí.
+                if "EXPECT_VIEW_NOT_TABLE" in str(exc):
+                    exc = RuntimeError(
+                        f"{tabla} ya existe como TABLA y este objeto se declaró como "
+                        f"VISTA. Spark no reemplaza una tabla con una vista. Es un "
+                        f"residuo de un modelo anterior, no un defecto de esta carga.\n"
+                        f"Solución (manual, fuera del bundle): "
+                        f"DROP TABLE {self.catalog}.{self.schema}.{tabla}; y vuelve a "
+                        f"correr. Silver es 100% derivable de Bronze, así que no se "
+                        f"pierde información. Ver scripts/migracion_silver_v1.sql.\n"
+                        f"Original: {exc}"
+                    )
                 log.exception("[%s] FALLIDO", tabla)
                 self.control.log_fallo(
                     tabla_destino=tabla, query_key=query_key, id_carga=obj["id_carga"],
