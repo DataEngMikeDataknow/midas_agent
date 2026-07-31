@@ -129,15 +129,35 @@ especificación. `n_periodos_usados_en_promedio` se publica para que el cálculo
 
 ## 3. Nivel 1 — pasarelas
 
-Vistas sobre Bronze, **sin filtros**, con columnas explícitas (nunca `SELECT *`) y comentario por
-columna. Existen para que ningún consumidor toque Bronze.
+Sobre Bronze, **sin filtros**, con columnas explícitas (nunca `SELECT *`). Existen para que ningún
+consumidor toque Bronze. Tres son vistas con comentario por columna; la cuarta
+(`detalle_solicitudes`) es una **tabla adoptada** y se rige por otras reglas — ver abajo.
 
 | Vista | Grano | Nota |
 |---|---|---|
 | `midas_datos_servicios_contrato_silver` | servicio suscrito | Roster por contrato: los servicios hermanos. `esta_activo` se deriva de `fecha_retiro` con el comodín `31/12/4732` |
-| `midas_datos_detalle_solicitudes_silver` | solicitud | Trámites radicados |
 | `midas_datos_investigacion_consumo_silver` | (SS, periodo, tipo) | El estado va **crudo** |
 | `midas_datos_perdidas_no_operacionales_silver` | expediente PNO | Sin ventana temporal |
+
+### `midas_datos_detalle_solicitudes_silver` · **tabla adoptada** · grano: solicitud
+
+Trámites radicados. Es el único objeto de la capa que **no definimos nosotros**: la tabla ya
+existía, tiene consumidores propios, y **su schema manda**. Nuestro pipeline solo refresca su
+contenido desde Bronze — 11 columnas, reflejo 1:1 de su Bronze, que también fue adoptada en su
+momento por la misma razón.
+
+Consecuencias de adoptarla, que importan a quien la consuma:
+- **No tiene `tipo_solicitud_cod`.** Esa derivación era nuestra cuando el objeto era una vista;
+  ahora vive en `midas_features_consumo_silver`, el único que la necesitaba. Si vas a comparar
+  tipos de solicitud, extrae el código con `REGEXP_EXTRACT`, nunca con `SPLIT` (devuelve cadena
+  vacía con códigos negativos).
+- **No tiene `run_id` ni `fecha_carga_silver`.** La trazabilidad de su carga sigue en
+  `midas_log_cargas`, igual que la de todos los demás objetos.
+- **No lleva DDL en el repo, y es a propósito.** Un `CREATE TABLE IF NOT EXISTS` contra una tabla
+  que ya existe no hace nada y no falla: dejaría creer que el contrato es el nuestro cuando no lo
+  es.
+- Carga con `INSERT OVERWRITE ... BY NAME`. Si su dueño le agrega o quita una columna, **la carga
+  falla**. Es lo correcto: la forma posicional escribiría los valores corridos sin avisar.
 
 **El estado de investigación no se filtra, y es a propósito.** `2 = IMPUTABLE AL CLIENTE` y
 `3 = IMPUTABLE A LA EMPRESA` son **resoluciones, no cierres**. Un supuesto previo del proyecto

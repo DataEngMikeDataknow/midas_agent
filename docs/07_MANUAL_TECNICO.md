@@ -19,7 +19,7 @@ No cubre: SQL Functions, agente LLM, serving, inferencia, Gold ni CSV (viven en 
 flowchart TD
     O[Oracle] -->|JDBC driver-side| P[Parquet Volume UC]
     P --> B[Bronze 12 tablas]
-    B --> S[Silver 7 tablas + 6 vistas]
+    B --> S[Silver 8 tablas + 5 vistas]
     CTRL[(control / log)]
 ```
 
@@ -113,13 +113,15 @@ Objetos Silver producidos (13), en orden topologico sobre `query_padre_id`:
 | `midas_features_consumo_silver` | SILVER_TABLE | 7 reglas del Caso 2 |
 | `midas_historial_consumo_periodo_silver` | SILVER_VIEW | Colapsa el medidor |
 | `midas_datos_servicios_contrato_silver` | SILVER_VIEW | Roster por contrato |
-| `midas_datos_detalle_solicitudes_silver` | SILVER_VIEW | Pasarela |
+| `midas_datos_detalle_solicitudes_silver` | SILVER_TABLE_ADOPTADA | Tabla preexistente con dueño propio: se refresca, no se define |
 | `midas_datos_investigacion_consumo_silver` | SILVER_VIEW | Pasarela |
 | `midas_datos_perdidas_no_operacionales_silver` | SILVER_VIEW | Pasarela |
 | `midas_ordenes_variacion_consumo_silver` | SILVER_VIEW | **Nivel 2**, unico que filtra por actividad (I15) |
 
 Los objetos nuevos usan `CREATE TABLE IF NOT EXISTS` + `INSERT OVERWRITE ... BY NAME` (I18). Los
-`SILVER_LEGACY` conservan su `CREATE OR REPLACE TABLE`: cambiarlos no era el alcance.
+`SILVER_LEGACY` conservan su `CREATE OR REPLACE TABLE`: cambiarlos no era el alcance. El
+`SILVER_TABLE_ADOPTADA` **no lleva DDL**: la tabla ya existia con dueño y consumidores propios,
+asi que su schema manda y solo se refresca su contenido.
 
 Contrato de la capa para consumidores: [`contrato_silver.md`](contrato_silver.md).
 Decision de grano: [`adr/0002-grano-historial-consumo.md`](adr/0002-grano-historial-consumo.md).
@@ -185,7 +187,8 @@ Task `check` (notebook). On-demand, sin schedule. Valida DNS -> TCP -> jar -> `S
 
 ### Salida
 - 12 Parquet en `/Volumes/<source_catalog>/<source_schema>/<source_volume>/<source_base_path>`
-- 12 tablas Bronze, 7 tablas Silver y 6 vistas Silver en `<catalog_destino>.facturacion`
+- 12 tablas Bronze, 8 tablas Silver (una de ellas adoptada) y 5 vistas Silver en
+  `<catalog_destino>.facturacion`
 - filas de bitacora en `midas_log_cargas`
 
 ### Contrato de tipos (paridad Parquet, I10)

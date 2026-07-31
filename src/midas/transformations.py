@@ -40,10 +40,17 @@ log = logging.getLogger(__name__)
 # tipo_carga -> subcarpeta de la que sale la sentencia de CARGA
 _FASE_CARGA = {
     "SILVER_TABLE": "load",
+    "SILVER_TABLE_ADOPTADA": "load",
     "SILVER_LEGACY": "load",
     "SILVER_VIEW": "view",
 }
 # Solo estos tienen DDL previo.
+#
+# SILVER_TABLE_ADOPTADA queda FUERA a proposito: la tabla no es nuestra. Existe desde
+# antes, tiene consumidores propios y su schema MANDA. Nosotros solo refrescamos su
+# contenido; declararle un DDL seria arrogarnos una definicion que no nos pertenece.
+# Es el mismo criterio que ya se aplico en Bronze con la tabla de solicitudes
+# (ver _SOLICITUDES_BRONZE_COLS en db/processing.py): se ADOPTA, no se recrea.
 _CON_DDL = {"SILVER_TABLE"}
 
 

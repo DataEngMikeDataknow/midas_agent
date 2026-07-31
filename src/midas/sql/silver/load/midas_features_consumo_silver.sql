@@ -79,6 +79,20 @@ cargos_periodo AS (
     WHERE id_periodo_consumo IS NOT NULL
     GROUP BY servicio_suscrito, id_periodo_consumo
 ),
+solicitudes AS (
+    -- midas_datos_detalle_solicitudes_silver es una tabla ADOPTADA: su schema no lo
+    -- controlamos y NO trae el codigo numerico del tipo. La derivacion vive aqui, en
+    -- el unico consumidor que la necesita.
+    --
+    -- REGEXP_EXTRACT y no SPLIT: SPLIT(x,'-')[0] devuelve CADENA VACIA para codigos
+    -- negativos, y ademas el separador convive en dos formatos ('300 - X' y '300-X').
+    SELECT
+        servicio_suscrito,
+        CAST(REGEXP_EXTRACT(tipo_solicitud, '^\\s*(-?[0-9]+)', 1) AS INT) AS tipo_solicitud_cod,
+        CAST(fecha_atencion_solicitud AS DATE)                            AS fecha_atencion
+    FROM {catalog}.{schema}.midas_datos_detalle_solicitudes_silver
+    WHERE fecha_atencion_solicitud IS NOT NULL
+),
 solicitudes_periodo AS (
     -- Un solo join por SS y un GROUP BY: devuelve UNA fila por grano, asi que el LEFT
     -- JOIN de `enriquecido` no puede multiplicar filas.
@@ -87,18 +101,17 @@ solicitudes_periodo AS (
         p.id_periodo_consumo,
         p.tipo_consumo_cod,
         MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_reconexion} AS INT)
-                  AND CAST(s.fecha_atencion_solicitud AS DATE) <= p.fecha_fin_consumo
-                 THEN CAST(s.fecha_atencion_solicitud AS DATE) END)            AS fecha_ultima_reconexion,
+                  AND s.fecha_atencion <= p.fecha_fin_consumo
+                 THEN s.fecha_atencion END)                                    AS fecha_ultima_reconexion,
         MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_reconexion} AS INT)
-                  AND CAST(s.fecha_atencion_solicitud AS DATE) BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
+                  AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
                  THEN true ELSE false END)                                     AS solicitud_reconexion_intersecta_periodo,
         MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_suspension} AS INT)
-                  AND CAST(s.fecha_atencion_solicitud AS DATE) BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
+                  AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
                  THEN true ELSE false END)                                     AS solicitud_suspension_intersecta_periodo
     FROM periodo p
-    LEFT JOIN {catalog}.{schema}.midas_datos_detalle_solicitudes_silver s
+    LEFT JOIN solicitudes s
            ON s.servicio_suscrito = p.servicio_suscrito
-          AND s.fecha_atencion_solicitud IS NOT NULL
     GROUP BY p.servicio_suscrito, p.id_periodo_consumo, p.tipo_consumo_cod
 ),
 enriquecido AS (

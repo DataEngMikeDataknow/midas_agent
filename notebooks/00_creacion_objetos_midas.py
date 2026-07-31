@@ -317,6 +317,10 @@ _resolver_padres(_PADRES, JOB_NAME)
 #   SILVER_LEGACY -> load/ (CREATE OR REPLACE TABLE) — las 4 del Caso 1.
 #                    Se orquestan y se loguean, pero NO se les cambia el patron de
 #                    materializacion: arreglar eso no es de este trabajo.
+#   SILVER_TABLE_ADOPTADA -> load/ (INSERT OVERWRITE ... BY NAME), SIN ddl/.
+#                    La tabla ya existia y tiene consumidores propios: su schema MANDA y
+#                    no le declaramos definicion. Solo refrescamos su contenido. Es el
+#                    mismo criterio que se aplico en Bronze con la tabla de solicitudes.
 JOB_NAME_SILVER = "midas_silver"
 
 SEED_SILVER = [
@@ -333,7 +337,9 @@ SEED_SILVER = [
     # ── Nuevas Caso 2: vistas (Nivel 1) — orden 51..55 ──
     ("midas_historial_consumo_periodo_silver",      "midas_historial_consumo_periodo_silver",      "SILVER_VIEW",   51, None),
     ("midas_datos_servicios_contrato_silver",       "midas_datos_servicios_contrato_silver",       "SILVER_VIEW",   52, None),
-    ("midas_datos_detalle_solicitudes_silver",      "midas_datos_detalle_solicitudes_silver",      "SILVER_VIEW",   53, None),
+    # ADOPTADA: la tabla ya existía y tiene consumidores propios; su schema manda y no
+    # le declaramos DDL. Solo refrescamos su contenido. Mismo criterio que su Bronze.
+    ("midas_datos_detalle_solicitudes_silver",      "midas_datos_detalle_solicitudes_silver",      "SILVER_TABLE_ADOPTADA", 53, None),
     ("midas_datos_investigacion_consumo_silver",    "midas_datos_investigacion_consumo_silver",    "SILVER_VIEW",   54, None),
     ("midas_datos_perdidas_no_operacionales_silver","midas_datos_perdidas_no_operacionales_silver","SILVER_VIEW",   55, None),
     # ── Nivel 2: el UNICO objeto que puede filtrar por actividad (I15) — orden 61 ──

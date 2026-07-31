@@ -102,13 +102,18 @@ OBJETOS = [
     ("midas_features_consumo_silver",                "TABLE"),
     ("midas_historial_consumo_periodo_silver",       "VIEW"),
     ("midas_datos_servicios_contrato_silver",        "VIEW"),
-    ("midas_datos_detalle_solicitudes_silver",       "VIEW"),
+    # ADOPTADA: es TABLA y no es nuestra. Su schema lo fija su dueño; nosotros solo
+    # refrescamos el contenido. Por eso no se le exige comentario ni columnas de
+    # auditoría, igual que a las legacy del Caso 1.
+    ("midas_datos_detalle_solicitudes_silver",       "TABLE"),
     ("midas_datos_investigacion_consumo_silver",     "VIEW"),
     ("midas_datos_perdidas_no_operacionales_silver", "VIEW"),
     ("midas_ordenes_variacion_consumo_silver",       "VIEW"),
 ]
 
 LEGACY_CASO1 = [o for o, _ in OBJETOS[:4]]
+# Objetos que NO definimos nosotros: no se les exige comentario por columna.
+ADOPTADAS = ["midas_datos_detalle_solicitudes_silver"]
 TABLAS_NUEVAS = ["midas_historial_consumo_silver",
                  "midas_historial_cargos_silver",
                  "midas_features_consumo_silver"]
@@ -171,6 +176,12 @@ for obj, _ in OBJETOS:
     campos = spark.table(f"{PREFIJO}.{obj}").schema.fields
     sin_com = [f.name for f in campos
                if not (f.metadata or {}).get("comment", "").strip()]
+
+    if obj in ADOPTADAS:
+        chequeo("S2", f"{obj} (adoptada) columnas comentadas", "REVISAR",
+                obtenido=f"{len(campos) - len(sin_com)}/{len(campos)}",
+                nota="tabla adoptada: los comentarios son de su dueño, no nuestros")
+        continue
 
     if obj in LEGACY_CASO1:
         # Las legacy usan CTAS: heredan lo que traiga Bronze y no declaran comentarios.

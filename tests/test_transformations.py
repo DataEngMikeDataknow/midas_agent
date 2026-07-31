@@ -230,7 +230,8 @@ def _seed_silver():
              / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
     ini = texto.index("SEED_SILVER = [")
     bloque = texto[ini:texto.index("\n]", ini)]
-    filas = re.findall(r'\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"(SILVER_[A-Z]+)"', bloque)
+    # [A-Z_]+ y no [A-Z]+: SILVER_TABLE_ADOPTADA lleva guion bajo interno.
+    filas = re.findall(r'\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"(SILVER_[A-Z_]+)"', bloque)
     return [(tabla, key, tipo) for tabla, key, tipo in filas]
 
 
@@ -257,6 +258,33 @@ class TestSeedContraArchivos(unittest.TestCase):
                 codigo = _codigo((SQL_DIR / "load" / f"{key}.sql").read_text(encoding="utf-8")).upper()
                 self.assertIn("INSERT OVERWRITE", codigo)
                 self.assertNotIn("CREATE OR REPLACE TABLE", codigo)
+
+    def test_la_tabla_adoptada_no_declara_ddl(self):
+        """Una tabla ADOPTADA no es nuestra: su schema lo fija su dueño.
+
+        Declararle un `CREATE TABLE IF NOT EXISTS` sería peor que inútil — contra una
+        tabla que ya existe no hace nada, no falla, y deja creído que el contrato es el
+        nuestro. Y debe cargar con BY NAME: si el dueño le cambia una columna, queremos
+        que falle, no que escriba los valores corridos."""
+        adoptadas = [k for _, k, t in _seed_silver() if t == "SILVER_TABLE_ADOPTADA"]
+        self.assertEqual(adoptadas, ["midas_datos_detalle_solicitudes_silver"])
+        for key in adoptadas:
+            with self.subTest(tabla=key):
+                self.assertFalse((SQL_DIR / "ddl" / f"{key}.sql").exists(),
+                                 "una tabla adoptada no lleva DDL propio")
+                self.assertFalse((SQL_DIR / "view" / f"{key}.sql").exists(),
+                                 "quedó el .sql de vista de cuando era SILVER_VIEW")
+                codigo = _codigo((SQL_DIR / "load" / f"{key}.sql").read_text(encoding="utf-8")).upper()
+                self.assertIn("INSERT OVERWRITE", codigo)
+                self.assertIn("BY NAME", codigo)
+
+    def test_todo_tipo_carga_sembrado_lo_conoce_el_orquestador(self):
+        """Un tipo_carga que el orquestador no mapea se registra como fallo en la
+        bitácora y el objeto nunca se construye."""
+        from src.midas.transformations import _FASE_CARGA
+        for tabla, _, tipo in _seed_silver():
+            with self.subTest(tabla=tabla):
+                self.assertIn(tipo, _FASE_CARGA)
 
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""
