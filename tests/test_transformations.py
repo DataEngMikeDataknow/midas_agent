@@ -117,6 +117,31 @@ class TestOrdenTopologico(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no está entre los objetos"):
             orden_topologico([self._obj(2, "hijo", padre=99)])
 
+    def test_padre_nulo_de_pandas_no_es_padre_inexistente(self):
+        """REGRESIÓN (dllo, 2026-07-31): `get_active_tables()` hace `.toPandas()`, y
+        pandas no tiene enteros nulos en su dtype por defecto: una columna BIGINT con
+        NULLs pasa a float64 y el NULL llega como NaN. `NaN is not None` es True, así
+        que "sin padre" se leía como "padre inexistente" y abortaba la capa entera
+        antes de ejecutar un solo objeto."""
+        import pandas as pd
+
+        # Construido como lo entrega .toPandas(): la columna con un NULL es float64.
+        df = pd.DataFrame([
+            {"id_carga": 1, "tabla_destino": "sin_padre", "query_padre_id": None,
+             "orden_ejecucion": 31, "tipo_carga": "SILVER_LEGACY", "query_key": "sin_padre"},
+            {"id_carga": 2, "tabla_destino": "con_padre", "query_padre_id": 1,
+             "orden_ejecucion": 61, "tipo_carga": "SILVER_VIEW", "query_key": "con_padre"},
+        ])
+        self.assertEqual(df["query_padre_id"].dtype.kind, "f",
+                         "el caso de regresión perdió su NaN: pandas ya no usa float64")
+
+        plan = orden_topologico(df.to_dict("records"))
+        self.assertEqual([o["tabla_destino"] for o in plan], ["sin_padre", "con_padre"])
+        # Y quedan normalizados para quien los consuma después.
+        self.assertIsNone(plan[0]["query_padre_id"])
+        self.assertEqual(plan[1]["query_padre_id"], 1)
+        self.assertIsInstance(plan[1]["id_carga"], int)
+
 
 class TestParametros(unittest.TestCase):
     def test_valida_los_numericos(self):

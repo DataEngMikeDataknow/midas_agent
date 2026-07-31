@@ -27,6 +27,7 @@ y deja a los lectores sin tabla durante la operación. Es el mismo argumento que
 escrito en `ingestion.py` para Bronze.
 """
 import logging
+import math
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -46,15 +47,44 @@ _FASE_CARGA = {
 _CON_DDL = {"SILVER_TABLE"}
 
 
+def _entero_o_none(valor) -> Optional[int]:
+    """Normaliza un entero que viene de pandas.
+
+    `get_active_tables()` hace `.toPandas()`, y pandas no tiene enteros nulos en su
+    dtype por defecto: una columna BIGINT con NULLs se convierte a float64 y el NULL
+    llega como **NaN, no como None**. Como `NaN is not None` es True, un chequeo
+    ingenuo lee "sin padre" como "padre inexistente" y aborta la corrida entera.
+
+    Silver es el primer consumidor real de `query_padre_id` — en Bronze la columna
+    siempre fue informativa — así que este es el primer punto donde importa.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, float) and math.isnan(valor):
+        return None
+    return int(valor)
+
+
 def orden_topologico(objetos: List[dict]) -> List[dict]:
     """Ordena por dependencias (`query_padre_id`), desempatando por `orden_ejecucion`.
 
     Falla ante un ciclo o un padre inactivo. Es preferible no correr a correr en un
     orden que construya una tabla sobre los datos de ayer.
+
+    Devuelve copias con `id_carga` y `query_padre_id` ya normalizados a int/None, para
+    que nadie corriente abajo tenga que volver a lidiar con los tipos de pandas.
     """
+    objetos = [
+        {**o,
+         "id_carga": _entero_o_none(o["id_carga"]),
+         "query_padre_id": _entero_o_none(o.get("query_padre_id")),
+         "orden_ejecucion": _entero_o_none(o.get("orden_ejecucion")) or 0}
+        for o in objetos
+    ]
+
     por_id = {o["id_carga"]: o for o in objetos}
     for o in objetos:
-        padre = o.get("query_padre_id")
+        padre = o["query_padre_id"]
         if padre is not None and padre not in por_id:
             raise ValueError(
                 f"{o['tabla_destino']}: su query_padre_id={padre} no está entre los objetos "
@@ -73,14 +103,14 @@ def orden_topologico(objetos: List[dict]) -> List[dict]:
                 f"'{obj['tabla_destino']}'. Revisa query_padre_id."
             )
         visitando.add(clave)
-        padre = obj.get("query_padre_id")
+        padre = obj["query_padre_id"]
         if padre is not None:
             visitar(por_id[padre])
         visitando.discard(clave)
         visitado.add(clave)
         ordenado.append(obj)
 
-    for obj in sorted(objetos, key=lambda o: (o.get("orden_ejecucion") or 0, o["tabla_destino"])):
+    for obj in sorted(objetos, key=lambda o: (o["orden_ejecucion"], o["tabla_destino"])):
         visitar(obj)
     return ordenado
 
@@ -154,7 +184,8 @@ class SilverTransformer:
 
         for obj in plan:
             tabla, query_key, tipo = obj["tabla_destino"], obj["query_key"], obj["tipo_carga"]
-            padre = nombre_por_id.get(obj.get("query_padre_id"))
+            # orden_topologico ya normalizó los ids: aquí es int o None, nunca NaN.
+            padre = nombre_por_id.get(obj["query_padre_id"])
 
             if padre in fallidos:
                 log.warning("[%s] OMITIDO: su padre '%s' falló.", tabla, padre)
