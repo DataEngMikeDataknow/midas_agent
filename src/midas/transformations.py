@@ -137,8 +137,13 @@ class SilverTransformer:
         ruta = self.sql_dir / fase / f"{query_key}.sql"
         if not ruta.exists():
             raise FileNotFoundError(
-                f"Falta {ruta}. El control declara el objeto '{query_key}' pero no hay SQL "
-                f"para él: o se sembró de más, o el archivo no se sincronizó al workspace."
+                f"Falta {ruta}. El control declara el objeto '{query_key}' con una fase "
+                f"'{fase}' para la que no hay SQL. Causas, de más a menos probable:\n"
+                f"  1. El tipo_carga cambió en el código y falta re-ejecutar la task "
+                f"crear_objetos: el control sigue con el valor viejo y apunta a otra "
+                f"carpeta. Es lo que pasa si se repara SOLO bronze_to_silver.\n"
+                f"  2. El archivo no se sincronizó al workspace (¿falta el pull?).\n"
+                f"  3. El objeto se sembró de más y no le corresponde SQL."
             )
         sql = ruta.read_text(encoding="utf-8").strip().rstrip(";").strip()
         # spark.sql ejecuta UNA sentencia: un ';' interno haría que la segunda mitad se
@@ -147,6 +152,43 @@ class SilverTransformer:
         if ";" in sql_desnudo(sql):
             raise ValueError(f"{ruta}: un archivo = una sentencia (hay un ';' interno).")
         return resolver(sql, self.ctx, str(ruta))
+
+    def _preparar(self, plan: List[dict]) -> Dict[tuple, str]:
+        """Lee y resuelve TODAS las sentencias antes de ejecutar la primera.
+
+        Sin esto, un archivo faltante o un placeholder sin resolver se descubre a mitad
+        de la corrida, cuando ya se reescribieron los objetos anteriores. Pasó en dllo
+        el 2026-07-31: falló el objeto 10 de 13 con los 9 previos ya sobrescritos.
+
+        Leer un archivo es barato; reescribir doce tablas para descubrir que la trece
+        no compila, no. Y los errores se acumulan: se reportan TODOS los problemas de
+        una vez, no el primero.
+        """
+        sentencias, problemas = {}, []
+        for obj in plan:
+            tabla, tipo = obj["tabla_destino"], obj["tipo_carga"]
+            fase_carga = _FASE_CARGA.get(tipo)
+            if fase_carga is None:
+                problemas.append(
+                    f"{tabla}: tipo_carga '{tipo}' desconocido. Conocidos: "
+                    f"{sorted(_FASE_CARGA)}"
+                )
+                continue
+            fases = [("ddl", "ddl")] if tipo in _CON_DDL else []
+            fases.append((fase_carga, "carga"))
+            for carpeta, etiqueta in fases:
+                try:
+                    sentencias[(tabla, etiqueta)] = self._leer_sql(carpeta, obj["query_key"])
+                except Exception as exc:  # noqa: BLE001
+                    problemas.append(f"{tabla} [{carpeta}]: {exc}")
+
+        if problemas:
+            raise RuntimeError(
+                "La capa Silver NO se ejecutó: hay objetos que no se pueden preparar. "
+                "No se tocó ningún dato.\n  - " + "\n  - ".join(problemas)
+            )
+        log.info("Verificación previa OK: %d sentencias listas.", len(sentencias))
+        return sentencias
 
     def _contar(self, tabla: str) -> Optional[int]:
         try:
@@ -179,10 +221,12 @@ class SilverTransformer:
         log.info("Plan Silver (%d objetos): %s", len(plan),
                  " -> ".join(o["tabla_destino"] for o in plan))
 
+        sentencias = self._preparar(plan)
+
         # ── Fase 1: DDL. Idempotente, no toca datos, no se loguea como carga. ──
         for obj in plan:
             if obj["tipo_carga"] in _CON_DDL:
-                self.spark.sql(self._leer_sql("ddl", obj["query_key"]))
+                self.spark.sql(sentencias[(obj["tabla_destino"], "ddl")])
                 log.info("DDL OK: %s", obj["tabla_destino"])
 
         # ── Fase 2: cargas y vistas, en orden topológico, envueltas en control ──
@@ -200,16 +244,10 @@ class SilverTransformer:
                 errores.append((tabla, f"omitido: el padre '{padre}' falló"))
                 continue
 
-            fase = _FASE_CARGA.get(tipo)
-            if fase is None:
-                errores.append((tabla, f"tipo_carga desconocido: {tipo}"))
-                fallidos.add(tabla)
-                continue
-
             fecha_inicio = datetime.utcnow()
             self.control.log_inicio(tabla, query_key, obj["id_carga"], fecha_inicio)
             try:
-                self.spark.sql(self._leer_sql(fase, query_key))
+                self.spark.sql(sentencias[(tabla, "carga")])
                 n = None if tipo == "SILVER_VIEW" else self._contar(tabla)
 
                 # Un INSERT OVERWRITE con Bronze vacía BORRA la Silver. Publicar cero

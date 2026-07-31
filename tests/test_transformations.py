@@ -215,6 +215,39 @@ class TestOrquestador(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "no hay SQL"):
             t._leer_sql("load", "objeto_que_no_existe")
 
+    def test_no_toca_datos_si_falta_un_sql(self):
+        """REGRESIÓN (dllo, 2026-07-31): el control decía SILVER_VIEW y el archivo ya
+        era load/, así que falló en el objeto 10 de 13 — con los 9 anteriores ya
+        sobrescritos. Leer los archivos es barato; reescribir nueve tablas para
+        descubrir que la décima no existe, no."""
+        spark, control = MagicMock(), MagicMock()
+        t = SilverTransformer(spark, "cat", "sch", control, sql_dir=str(SQL_DIR))
+        t.ctx = {"catalog": "cat", "schema": "sch", "run_id": "r"}
+        plan = [{"tabla_destino": "midas_datos_servicios_contrato_silver",
+                 "query_key": "midas_datos_servicios_contrato_silver",
+                 "tipo_carga": "SILVER_VIEW", "id_carga": 1, "query_padre_id": None},
+                {"tabla_destino": "fantasma", "query_key": "fantasma",
+                 "tipo_carga": "SILVER_VIEW", "id_carga": 2, "query_padre_id": None}]
+        with self.assertRaises(RuntimeError) as ctx:
+            t._preparar(plan)
+        self.assertIn("No se tocó ningún dato", str(ctx.exception))
+        self.assertIn("fantasma", str(ctx.exception))
+        spark.sql.assert_not_called()
+
+    def test_acumula_todos_los_problemas_de_preparacion(self):
+        """Reportar solo el primero obliga a una corrida por error."""
+        t = SilverTransformer(MagicMock(), "cat", "sch", MagicMock(), sql_dir=str(SQL_DIR))
+        t.ctx = {}
+        plan = [{"tabla_destino": "a", "query_key": "a", "tipo_carga": "SILVER_VIEW",
+                 "id_carga": 1, "query_padre_id": None},
+                {"tabla_destino": "b", "query_key": "b", "tipo_carga": "TIPO_INVENTADO",
+                 "id_carga": 2, "query_padre_id": None}]
+        with self.assertRaises(RuntimeError) as ctx:
+            t._preparar(plan)
+        mensaje = str(ctx.exception)
+        self.assertIn("a [view]", mensaje)
+        self.assertIn("TIPO_INVENTADO", mensaje)
+
     def test_centinela_para_parametros_sin_confirmar(self):
         """Un parámetro inactivo no debe producir un número inventado."""
         self.assertEqual(SIN_PARAMETRIZAR, "__SIN_PARAMETRIZAR__")
