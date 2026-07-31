@@ -216,6 +216,14 @@ targets:
                   - "${var.catalog_destino}"
                   - "--schema"
                   - "${var.schema_destino}"
+                  # Plano de control de Silver: job_name lo separa del de Bronze en las
+                  # mismas midas_control_cargas / midas_log_cargas.
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_silver"
 
   # ------------------------------- PRUEBAS (uat) ----------------------------
   uat:
@@ -343,6 +351,14 @@ targets:
                   - "${var.catalog_destino}"
                   - "--schema"
                   - "${var.schema_destino}"
+                  # Plano de control de Silver: job_name lo separa del de Bronze en las
+                  # mismas midas_control_cargas / midas_log_cargas.
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_silver"
 
         # Job de diagnóstico on-demand (patrón alineado con vera_framework).
         # Solo en uat/pdn, donde la red hacia Oracle es el riesgo (en dllo no
@@ -501,6 +517,14 @@ targets:
                   - "${var.catalog_destino}"
                   - "--schema"
                   - "${var.schema_destino}"
+                  # Plano de control de Silver: job_name lo separa del de Bronze en las
+                  # mismas midas_control_cargas / midas_log_cargas.
+                  - "--control_catalog"
+                  - "${var.catalog_destino}"
+                  - "--control_schema"
+                  - "${var.schema_destino}"
+                  - "--job_name"
+                  - "midas_silver"
 
         # Job de diagnóstico on-demand (patrón alineado con vera_framework).
         # Solo en uat/pdn, donde la red hacia Oracle es el riesgo (en dllo no

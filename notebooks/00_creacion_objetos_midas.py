@@ -4,7 +4,8 @@
 # MAGIC Primera task del job `midas_bronze_silver`. Crea de forma **idempotente**
 # MAGIC (`CREATE TABLE IF NOT EXISTS`) las tablas del plano de control
 # MAGIC (`midas_control_cargas`, `midas_log_cargas`), la tabla de parámetros
-# MAGIC (`midas_parametros`) y **siembra** el control con `job_name = 'midas_bronze'`:
+# MAGIC (`midas_parametros`) y **siembra** el control con DOS `job_name`:
+# MAGIC `midas_bronze` (12 cargas) y `midas_silver` (13 objetos). Bronze:
 # MAGIC 8 pasos `FULL_CHAINED` de la cadena (Caso 1) + 4 promociones `FULL_CHAINED` del
 # MAGIC Caso 2 (sin el roster, retirado en R2) + 1 de PNO (**12 filas**, todas `FULL_CHAINED`).
 # MAGIC
@@ -208,44 +209,73 @@ N_ESPERADO = len(SEED)  # fuente única de verdad para la verificación (no cabl
 def _sql_val(x):
     if x is None:
         return "NULL"
+    if isinstance(x, bool):          # antes que int: bool ES subclase de int
+        return "true" if x else "false"
     if isinstance(x, int):
         return str(x)
     return "'" + str(x).replace("'", "''") + "'"
 
 
-_rows = ",\n        ".join(
-    f"({_sql_val(t)}, {_sql_val(qk)}, {_sql_val(tc)}, {_sql_val(o)}, {_sql_val(cj)})"
-    for (t, qk, tc, o, cj) in SEED
-)
-spark.sql(f"""
-    MERGE INTO {CONTROL} AS dest
-    USING (
-      SELECT * FROM VALUES
-        {_rows}
-      AS t (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
-    ) AS src
-    ON  dest.catalog_destino = '{CATALOG}'
-    AND dest.schema_destino  = '{SCHEMA}'
-    AND dest.tabla_destino   = src.tabla_destino
-    WHEN MATCHED THEN UPDATE SET
-        dest.tipo_carga         = src.tipo_carga,
-        dest.query_key          = src.query_key,
-        dest.activa             = true,
-        dest.orden_ejecucion    = src.orden_ejecucion,
-        dest.columna_join       = src.columna_join,
-        dest.job_name           = '{JOB_NAME}',
-        dest.fecha_modificacion = current_timestamp()
-    WHEN NOT MATCHED THEN INSERT (
-        catalog_destino, schema_destino, tabla_destino,
-        tipo_carga, query_key, job_name, activa, orden_ejecucion,
-        columna_join, comentarios
-    ) VALUES (
-        '{CATALOG}', '{SCHEMA}', src.tabla_destino,
-        src.tipo_carga, src.query_key, '{JOB_NAME}', true, src.orden_ejecucion,
-        src.columna_join, 'Bronze Caso 1 + Caso 2'
+def _merge_seed(seed, job_name, comentario):
+    """MERGE idempotente de un bloque del plano de control.
+
+    `job_name` VA EN EL ON. Sin eso, dos jobs que compartan la tabla de control se
+    pisarian mutuamente en cuanto coincidiera un tabla_destino: el MERGE de uno
+    reasignaria la fila del otro. Hoy los nombres no colisionan (Bronze vs Silver),
+    pero el ON es la garantia, no la suerte.
+
+    Las columnas GESTIONADAS se re-imponen en WHEN MATCHED; `comentarios` solo se
+    escribe en el INSERT para no pisar ediciones manuales.
+    """
+    filas = ",\n        ".join(
+        f"({_sql_val(t)}, {_sql_val(qk)}, {_sql_val(tc)}, {_sql_val(o)}, {_sql_val(cj)})"
+        for (t, qk, tc, o, cj) in seed
     )
-""")
-print(f"OK  bootstrap MERGE del control ({N_ESPERADO} filas: 1 dim + 8 cadena + 4 promociones)")
+    spark.sql(f"""
+        MERGE INTO {CONTROL} AS dest
+        USING (
+          SELECT * FROM VALUES
+            {filas}
+          AS t (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
+        ) AS src
+        ON  dest.catalog_destino = '{CATALOG}'
+        AND dest.schema_destino  = '{SCHEMA}'
+        AND dest.job_name        = '{job_name}'
+        AND dest.tabla_destino   = src.tabla_destino
+        WHEN MATCHED THEN UPDATE SET
+            dest.tipo_carga         = src.tipo_carga,
+            dest.query_key          = src.query_key,
+            dest.activa             = true,
+            dest.orden_ejecucion    = src.orden_ejecucion,
+            dest.columna_join       = src.columna_join,
+            dest.fecha_modificacion = current_timestamp()
+        WHEN NOT MATCHED THEN INSERT (
+            catalog_destino, schema_destino, tabla_destino,
+            tipo_carga, query_key, job_name, activa, orden_ejecucion,
+            columna_join, comentarios
+        ) VALUES (
+            '{CATALOG}', '{SCHEMA}', src.tabla_destino,
+            src.tipo_carga, src.query_key, '{job_name}', true, src.orden_ejecucion,
+            src.columna_join, {_sql_val(comentario)}
+        )
+    """)
+    print(f"OK  MERGE del control: {len(seed)} filas con job_name='{job_name}'")
+
+
+def _resolver_padres(padres, job_name):
+    """query_padre_id = grafo de dependencias, como DATO en el control."""
+    for hija, padre in padres:
+        spark.sql(f"""
+            UPDATE {CONTROL} SET query_padre_id = (
+                SELECT id_carga FROM {CONTROL}
+                WHERE tabla_destino = '{padre}' AND job_name = '{job_name}'
+            )
+            WHERE tabla_destino = '{hija}' AND job_name = '{job_name}'
+        """)
+    print(f"OK  query_padre_id resuelto ({len(padres)} dependencias, job_name='{job_name}')")
+
+
+_merge_seed(SEED, JOB_NAME, "Bronze Caso 1 + Caso 2")
 
 # COMMAND ----------
 # ───── Dependencias query_padre_id (informativo en FULL_CHAINED) ─────
@@ -267,15 +297,61 @@ _PADRES = [
     # v3 R4: PNO espeja el driver de A1 (mismo padre, mismo conjunto de SS).
     ("midas_datos_perdidas_no_operacionales_bronze", "midas_datos_basicos_producto_bronze"),
 ]
-for hija, padre in _PADRES:
-    spark.sql(f"""
-        UPDATE {CONTROL} SET query_padre_id = (
-            SELECT id_carga FROM {CONTROL}
-            WHERE tabla_destino = '{padre}' AND job_name = '{JOB_NAME}'
-        )
-        WHERE tabla_destino = '{hija}' AND job_name = '{JOB_NAME}'
-    """)
-print("OK  query_padre_id resuelto para la cadena")
+_resolver_padres(_PADRES, JOB_NAME)
+
+
+# COMMAND ----------
+# ═════════════════════════════════════════════════════════════════════════════
+# CAPA SILVER — siembra del plano de control (job_name = 'midas_silver')
+# ═════════════════════════════════════════════════════════════════════════════
+# Silver comparte las MISMAS tablas de control que Bronze, discriminada por job_name.
+# Con esto cada objeto Silver queda registrado en midas_log_cargas: hasta hoy, si una
+# Silver salia vacia nadie se enteraba hasta que el agente fallaba.
+#
+# `query_key` == nombre del archivo .sql == nombre del objeto. El orquestador
+# (src/midas/transformations.py) lee src/midas/sql/silver/<fase>/<query_key>.sql.
+#
+# tipo_carga define la FASE y el patron de materializacion:
+#   SILVER_TABLE  -> ddl/ (CREATE TABLE IF NOT EXISTS, una vez) + load/ (INSERT OVERWRITE)
+#   SILVER_VIEW   -> view/ (CREATE OR REPLACE VIEW)
+#   SILVER_LEGACY -> load/ (CREATE OR REPLACE TABLE) — las 4 del Caso 1.
+#                    Se orquestan y se loguean, pero NO se les cambia el patron de
+#                    materializacion: arreglar eso no es de este trabajo.
+JOB_NAME_SILVER = "midas_silver"
+
+SEED_SILVER = [
+    # (tabla_destino, query_key, tipo_carga, orden_ejecucion, columna_join)
+    # ── Legacy Caso 1 (patron intacto) — orden 31..34 ──
+    ("midas_datos_basicos_producto_silver",         "midas_datos_basicos_producto_silver",         "SILVER_LEGACY", 31, None),
+    ("midas_ordenes_calidad_pendientes_silver",     "midas_ordenes_calidad_pendientes_silver",     "SILVER_LEGACY", 32, None),
+    ("midas_historial_critica_silver",              "midas_historial_critica_silver",              "SILVER_LEGACY", 33, None),
+    ("midas_historial_facturacion_silver",          "midas_historial_facturacion_silver",          "SILVER_LEGACY", 34, None),
+    # ── Nuevas Caso 2: tablas — orden 41..43 ──
+    ("midas_historial_consumo_silver",              "midas_historial_consumo_silver",              "SILVER_TABLE",  41, None),
+    ("midas_historial_cargos_silver",               "midas_historial_cargos_silver",               "SILVER_TABLE",  42, None),
+    ("midas_features_consumo_silver",               "midas_features_consumo_silver",               "SILVER_TABLE",  43, None),
+    # ── Nuevas Caso 2: vistas (Nivel 1) — orden 51..55 ──
+    ("midas_historial_consumo_periodo_silver",      "midas_historial_consumo_periodo_silver",      "SILVER_VIEW",   51, None),
+    ("midas_datos_servicios_contrato_silver",       "midas_datos_servicios_contrato_silver",       "SILVER_VIEW",   52, None),
+    ("midas_datos_detalle_solicitudes_silver",      "midas_datos_detalle_solicitudes_silver",      "SILVER_VIEW",   53, None),
+    ("midas_datos_investigacion_consumo_silver",    "midas_datos_investigacion_consumo_silver",    "SILVER_VIEW",   54, None),
+    ("midas_datos_perdidas_no_operacionales_silver","midas_datos_perdidas_no_operacionales_silver","SILVER_VIEW",   55, None),
+    # ── Nivel 2: el UNICO objeto que puede filtrar por actividad (I15) — orden 61 ──
+    ("midas_ordenes_variacion_consumo_silver",      "midas_ordenes_variacion_consumo_silver",      "SILVER_VIEW",   61, None),
+]
+N_ESPERADO_SILVER = len(SEED_SILVER)
+
+# Dependencias REALES entre objetos Silver. Las que solo leen Bronze no tienen padre:
+# su prerequisito es la task anterior del job, no otro objeto Silver.
+_PADRES_SILVER = [
+    ("midas_historial_consumo_periodo_silver",  "midas_historial_consumo_silver"),
+    ("midas_features_consumo_silver",           "midas_historial_consumo_silver"),
+    ("midas_datos_servicios_contrato_silver",   "midas_datos_basicos_producto_silver"),
+    ("midas_ordenes_variacion_consumo_silver",  "midas_ordenes_calidad_pendientes_silver"),
+]
+
+_merge_seed(SEED_SILVER, JOB_NAME_SILVER, "Silver Caso 2 (variacion significativa de consumo)")
+_resolver_padres(_PADRES_SILVER, JOB_NAME_SILVER)
 
 # COMMAND ----------
 # ───── v3 R1: desactivar la carga retirada ─────
@@ -312,19 +388,25 @@ for full in (CONTROL, LOG):
         raise RuntimeError(f"FALTA la tabla de control: {full}")
     print(f"OK  existe {full}")
 
-activas = spark.sql(f"""
-    SELECT tabla_destino, tipo_carga, query_key, activa, orden_ejecucion
-    FROM {CONTROL}
-    WHERE activa = true AND job_name = '{JOB_NAME}'
-    ORDER BY orden_ejecucion
-""")
-n = activas.count()
-display(activas)
-if n != N_ESPERADO:
-    raise RuntimeError(
-        f"Se esperaban {N_ESPERADO} filas activas con job_name='{JOB_NAME}' y hay {n}. "
-        f"El job no cargaría todas las tablas del seed."
-    )
+def _verificar_activas(job_name, n_esperado):
+    activas = spark.sql(f"""
+        SELECT tabla_destino, tipo_carga, query_key, activa, orden_ejecucion, query_padre_id
+        FROM {CONTROL}
+        WHERE activa = true AND job_name = '{job_name}'
+        ORDER BY orden_ejecucion
+    """)
+    n = activas.count()
+    display(activas)
+    if n != n_esperado:
+        raise RuntimeError(
+            f"Se esperaban {n_esperado} filas activas con job_name='{job_name}' y hay {n}. "
+            f"El job no cargaría todos los objetos del seed."
+        )
+    print(f"OK  {n} cargas activas con job_name='{job_name}'")
+
+
+_verificar_activas(JOB_NAME, N_ESPERADO)
+_verificar_activas(JOB_NAME_SILVER, N_ESPERADO_SILVER)
 
 # COMMAND ----------
 # ───── Tabla de PARÁMETROS (deuda del Caso 1: sacar los códigos "mágicos" del código) ─────
@@ -352,37 +434,101 @@ crear_tabla(
 )
 
 # Seed insert-if-missing (no pisa ediciones manuales de valor/activo).
+# Tupla de 6: (dominio, clave, valor, tipo_dato, descripcion, activo).
+#
+# `activo=False` NO es un parametro apagado por capricho: es la forma de decir
+# "todavia no confirmado por negocio". El resolver de Silver inyecta un centinela que
+# no matchea nada, asi que la feature que depende de el sale NULL en vez de un numero
+# calculado con un codigo inventado. Ver docs/semantica_campos_caso2.md.
 _PARAMS = [
-    ("orden",      "task_type_ordenes_calidad",   "883",     "INT", "task_type_id de la query de entrada (ordenes de calidad pendientes)"),
-    ("orden",      "activity_caso1",              "1019",    "INT", "activity_id del Caso 1 (diferencia acueducto/alcantarillado)"),
-    ("orden",      "activity_caso2",              "993",     "INT", "activity_id del Caso 2: '993 - VARIACION SIGNIFICATIVA CONTRA EL MES ANTERIOR'"),
-    ("orden",      "activity_critica",            "102010",  "INT", "activity_id de critica de consumo"),
-    ("orden",      "activity_decision_analista",  "7400027", "INT", "activity_id de decision de analista"),
-    ("orden",      "estado_orden_anulada",        "12",      "INT", "order_status_id de orden anulada (excluida en la entrada)"),
-    ("comentario", "tipo_comentario",             "4002",    "INT", "comment_type_id de comentario de orden"),
-    ("consumo",    "metodo_calculo_facturado",    "4",       "INT", "cossmecc que representa consumo facturado"),
-    ("ventana",    "ventana_meses_historia",      "6",       "INT", "meses de historia para consumos/investigacion"),
-    ("ventana",    "ventana_meses_observaciones", "3",       "INT", "meses de historia para observaciones/critica"),
-    # v3 (reunion 2026-07-28): MIDAS v1 mira 8 periodos hacia atras y el analista usa ~6.
-    # Jonatan pidio explicitamente que sea parametrizable, no cableado.
-    ("ventana",    "ventana_periodos_analisis",   "8",       "INT", "periodos hacia atras que analiza el agente (v1 usa 8; el analista ~6)"),
+    ("orden",      "task_type_ordenes_calidad",   "883",     "INT", "task_type_id de la query de entrada (ordenes de calidad pendientes)", True),
+    ("orden",      "activity_caso1",              "1019",    "INT", "DEPRECADO: renombrado a actividad_diferencia_acu_alc (I15: nada se nombra por numero de caso)", False),
+    ("orden",      "activity_caso2",              "993",     "INT", "DEPRECADO: renombrado a actividad_variacion_consumo (I15)", False),
+    ("orden",      "activity_critica",            "102010",  "INT", "activity_id de critica de consumo", True),
+    ("orden",      "activity_decision_analista",  "7400027", "INT", "activity_id de decision de analista", True),
+    ("orden",      "estado_orden_anulada",        "12",      "INT", "order_status_id de orden anulada (excluida en la entrada)", True),
+    ("comentario", "tipo_comentario",             "4002",    "INT", "comment_type_id de comentario de orden", True),
+    ("consumo",    "metodo_calculo_facturado",    "4",       "INT", "cossmecc que representa consumo facturado (el UNICO que se cobra)", True),
+    ("ventana",    "ventana_meses_historia",      "6",       "INT", "meses de historia para consumos/investigacion", True),
+    ("ventana",    "ventana_meses_observaciones", "3",       "INT", "meses de historia para observaciones/critica", True),
+    ("ventana",    "ventana_periodos_analisis",   "8",       "INT", "periodos hacia atras que analiza el agente (v1 usa 8; el analista ~6)", True),
+
+    # ═══ Silver: nombres estables por ACTIVIDAD, no por numero de caso (I15) ═══
+    ("orden",      "actividad_variacion_consumo",  "993",   "INT", "993 = variacion significativa de consumo. Unico lugar donde puede aparecer: la vista de Nivel 2", True),
+    ("orden",      "actividad_diferencia_acu_alc", "1019",  "INT", "1019 = diferencia acueducto-alcantarillado. Documental hasta que exista su vista de Nivel 2", True),
+
+    # ── Ventanas de las features ──
+    ("ventana",    "ventana_promedio_periodos",     "5",    "INT", "periodos con lectura correcta que componen el promedio de referencia", True),
+    ("ventana",    "ventana_promedio_max_periodos", "6",    "INT", "tope de periodos hacia atras al buscar los 5 con lectura correcta", True),
+
+    # ── Cargos ──
+    ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "cargcaca del consumo normal (aisla el consumo del resto de cargos)", True),
+    ("cargo",      "causal_pno",                   "74",    "INT",    "causal de perdida no operacional en cargos: DETECTA la PNO", True),
+    ("cargo",      "programa_facturacion_normal",  "5",     "INT",    "5 = FGCA, proceso normal de facturacion. Cualquier otro programa es un cargo inyectado por otra funcionalidad", True),
+    ("cargo",      "programa_pno",                 "307",   "INT",    "programa de PNO en cargos", True),
+    ("cargo",      "token_recuperacion",           "PR",    "STRING", "token en la 2a posicion de documento_soporte: CO-PR-202606-TC-0007 vs CO-202606-TC-0007. Parseo POSICIONAL por '-', nunca LIKE", True),
+    # Confirmado por el propio codigo de produccion: QUERY_CUENTAS_COBRO calcula
+    # decode(cargsign, 'DB', cargvalo, 'CR', -cargvalo). CR resta.
+    ("cargo",      "signo_credito",                "CR",    "STRING", "valor de cargos.CARGSIGN que RESTA. Sumar `valor` sin aplicarlo cuenta los creditos como cargos", True),
+
+    # ── Consumo / lectura ──
+    ("consumo",    "calificacion_investigacion",     "5055", "INT", "calificacion que marca consumo en investigacion", True),
+    ("consumo",    "marca_funcion_investigacion", "P_SOLICITUD_DE_INVESTIGACION", "STRING", "token en cossfufa que delata consumo en investigacion. Es la fuente MAS FIABLE del flag: vive en la fila del propio consumo y no requiere join", True),
+    ("consumo",    "calificacion_medidor_conforme",  "5097", "INT", "MEDIDOR CONFORME CALIBRACION (Caso 12)", True),
+    ("lectura",    "observacion_cambio_medidor",     "31",   "INT", "obselect 31 = MEDIDOR CAMBIADO. Complementa a la serie, que no siempre se actualiza", True),
+    ("lectura",    "observacion_lectura_menor",      "34",   "INT", "obselect 34 = LECTURA MENOR", True),
+    # servsusc.SESUFERE = 31/12/4732 es el comodin de "servicio activo" del sistema Open,
+    # no una fecha real. `esta_activo` no depende de el (usa > CURRENT_DATE, que es robusto
+    # ante cualquier centinela futuro), pero se expone la bandera para no perder el hecho.
+    ("servicio",   "fecha_retiro_comodin",   "4732-12-31", "STRING", "comodin de Open para 'sin fecha de retiro'. NO es una fecha real", True),
+
+    # ── Silver: operacion ──
+    ("consumo",    "tolerancia_cuadre",       "0.01",  "DOUBLE",  "tolerancia al cuadrar consumo del periodo contra la suma por medidor", True),
+    ("silver",     "permitir_carga_vacia",    "false", "BOOLEAN", "si es false, una tabla Silver con 0 filas tras INSERT OVERWRITE falla ruidosamente en vez de publicarse vacia", True),
+
+    # ═══ PENDIENTE-NEG: propuestos por ingenieria, SIN confirmar por negocio ═══
+    # Se siembran inactivos a proposito. La feature que dependa de ellos sale NULL.
+    ("consumo",    "tolerancia_vuelta_falsa",      "0.95", "DOUBLE", "PENDIENTE-NEG. Ratio consumo/10^digitos a partir del cual se sospecha vuelta falsa", False),
+    ("lectura",    "periodos_lectura_decreciente", "2",    "INT",    "PENDIENTE-NEG. Cuantos periodos consecutivos hacen 'sostenido'", False),
+    # OJO: el prompt de Silver traia estos dos INVERTIDOS. Segun el diccionario del
+    # proyecto, 300 = Reconexion por Pago y 56 = Suspension por no Pago.
+    ("solicitud",  "tipo_solicitud_reconexion",    "300",  "INT",    "PENDIENTE-NEG. 300 = Reconexion por Pago (ps_package_type)", False),
+    ("solicitud",  "tipo_solicitud_suspension",    "56",   "INT",    "PENDIENTE-NEG. 56 = Suspension por no Pago", False),
 ]
 _prows = ",\n        ".join(
-    f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)})"
-    for (d, k, v, td, desc) in _PARAMS
+    f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)}, {_sql_val(act)})"
+    for (d, k, v, td, desc, act) in _PARAMS
 )
 spark.sql(f"""
     MERGE INTO {PARAMETROS} AS dest
     USING (
       SELECT * FROM VALUES
         {_prows}
-      AS t (dominio, clave, valor, tipo_dato, descripcion)
+      AS t (dominio, clave, valor, tipo_dato, descripcion, activo)
     ) AS src
     ON dest.dominio = src.dominio AND dest.clave = src.clave
     WHEN NOT MATCHED THEN INSERT (dominio, clave, valor, tipo_dato, descripcion, activo)
-    VALUES (src.dominio, src.clave, src.valor, src.tipo_dato, src.descripcion, true)
+    VALUES (src.dominio, src.clave, src.valor, src.tipo_dato, src.descripcion, src.activo)
 """)
-print(f"OK  midas_parametros sembrada ({len(_PARAMS)} parámetros, insert-if-missing)")
+
+# Los dos alias por numero de caso ya estaban sembrados y ACTIVOS. El MERGE es
+# insert-if-missing, asi que no los toca: hay que desactivarlos explicitamente.
+# Dos parametros activos con el mismo valor son exactamente el drift que este diseño
+# combate. Nadie los consume todavia, asi que desactivarlos no rompe nada.
+spark.sql(f"""
+    UPDATE {PARAMETROS}
+       SET activo = false,
+           descripcion = CASE clave
+               WHEN 'activity_caso1' THEN 'DEPRECADO: renombrado a actividad_diferencia_acu_alc (I15)'
+               ELSE 'DEPRECADO: renombrado a actividad_variacion_consumo (I15)' END,
+           fecha_modificacion = current_timestamp()
+     WHERE clave IN ('activity_caso1', 'activity_caso2') AND activo = true
+""")
+print(f"OK  midas_parametros sembrada ({len(_PARAMS)} parámetros, insert-if-missing; "
+      f"{sum(1 for p in _PARAMS if not p[5])} inactivos por PENDIENTE-NEG o deprecacion)")
 
 # COMMAND ----------
-print(f"\n=== OBJETOS DE CONTROL MIDAS CREADOS / VALIDADOS ({N_ESPERADO} cargas activas + parámetros) ===")
+print(f"\n=== OBJETOS DE CONTROL MIDAS CREADOS / VALIDADOS ==="
+      f"\n    Bronze (job_name={JOB_NAME}): {N_ESPERADO} cargas activas"
+      f"\n    Silver (job_name={JOB_NAME_SILVER}): {N_ESPERADO_SILVER} objetos activos"
+      f"\n    Parámetros: {len(_PARAMS)}")

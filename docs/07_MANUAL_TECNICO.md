@@ -18,8 +18,8 @@ No cubre: SQL Functions, agente LLM, serving, inferencia, Gold ni CSV (viven en 
 ```mermaid
 flowchart TD
     O[Oracle] -->|JDBC driver-side| P[Parquet Volume UC]
-    P --> B[Bronze 8 tablas]
-    B --> S[Silver 4 tablas]
+    P --> B[Bronze 12 tablas]
+    B --> S[Silver 7 tablas + 6 vistas]
     CTRL[(control / log)]
 ```
 
@@ -65,7 +65,9 @@ Entradas CLI: `--db_user`, `--db_dsn`, `--secret_scope`, `--db_password_secret_k
 Lee la contraseña del secret scope, exporta env vars, arma `sys.path` (patron BUG-001),
 crea el `ControlCargasClient` y corre `ejecutar_cadena_extraccion`. Cierra la conexion en `finally`.
 
-Tablas Bronze producidas (8):
+Tablas Bronze producidas (12). Las 8 primeras son la cadena del Caso 1; las 4 ultimas se
+promovieron para el Caso 2. La fuente de verdad del listado es `SEED` en
+`notebooks/00_creacion_objetos_midas.py`, no este documento:
 - `midas_ordenes_calidad_pendientes_bronze`
 - `midas_datos_basicos_producto_bronze`
 - `midas_datos_lecturas_producto_bronze`
@@ -74,6 +76,13 @@ Tablas Bronze producidas (8):
 - `midas_datos_cometarios_ordenes_bronze`
 - `midas_datos_cuentas_cobro_bronze`
 - `midas_datos_detalle_cargos_bronze`
+- `midas_datos_detalle_solicitudes_bronze`
+- `midas_datos_consumos_contrato_bronze`
+- `midas_datos_investigacion_consumo_bronze`
+- `midas_datos_perdidas_no_operacionales_bronze`
+
+> **No hay tablas de dimension.** La resolucion codigo-descripcion se hace INLINE con
+> subconsultas correlacionadas dentro de cada query de Oracle (invariante I11).
 
 ### 3.5 `src/midas/main_ingestion.py` (task actualizar_ordenes_calidad)
 Entradas CLI: `--source_catalog/schema/volume/base_path`, `--destination_catalog/schema`,
@@ -83,13 +92,37 @@ overwrite ni TRUNCATE sobre tablas existentes: preserva PK/NOT NULL/comentarios)
 cada tabla en el log.
 
 ### 3.6 `src/midas/main_transform.py` (task bronze_to_silver)
-Entradas CLI: `--catalog`, `--schema`. Ejecuta `SilverTransformer`.
+Entradas CLI: `--catalog`, `--schema`, `--control_catalog`, `--control_schema`,
+`--job_name` (default `midas_silver`), `--run_id`. Ejecuta `SilverTransformer`.
 
-Tablas Silver producidas (4):
-- `midas_ordenes_calidad_pendientes_silver`
-- `midas_historial_facturacion_silver`
-- `midas_datos_basicos_producto_silver`
-- `midas_historial_critica_silver`
+El SQL ya NO vive inline en Python: esta en `src/midas/sql/silver/{ddl,load,view}/`, un archivo
+por objeto, **una sentencia por archivo**, y el nombre del archivo **es** el `query_key`. El
+orquestador resuelve los placeholders `{catalog}`, `{schema}`, `{run_id}` y `{p_<clave>}` contra
+`midas_parametros` y falla listando los que no pudo resolver.
+
+Objetos Silver producidos (13), en orden topologico sobre `query_padre_id`:
+
+| Objeto | tipo_carga | Nota |
+|---|---|---|
+| `midas_datos_basicos_producto_silver` | SILVER_LEGACY | Caso 1, SQL verbatim |
+| `midas_ordenes_calidad_pendientes_silver` | SILVER_LEGACY | Caso 1 + 2 columnas aditivas de corte facturable |
+| `midas_historial_critica_silver` | SILVER_LEGACY | Caso 1 |
+| `midas_historial_facturacion_silver` | SILVER_LEGACY | Caso 1 |
+| `midas_historial_consumo_silver` | SILVER_TABLE | Grano (SS, periodo, tipo, medidor) |
+| `midas_historial_cargos_silver` | SILVER_TABLE | Grano linea de cargo |
+| `midas_features_consumo_silver` | SILVER_TABLE | 7 reglas del Caso 2 |
+| `midas_historial_consumo_periodo_silver` | SILVER_VIEW | Colapsa el medidor |
+| `midas_datos_servicios_contrato_silver` | SILVER_VIEW | Roster por contrato |
+| `midas_datos_detalle_solicitudes_silver` | SILVER_VIEW | Pasarela |
+| `midas_datos_investigacion_consumo_silver` | SILVER_VIEW | Pasarela |
+| `midas_datos_perdidas_no_operacionales_silver` | SILVER_VIEW | Pasarela |
+| `midas_ordenes_variacion_consumo_silver` | SILVER_VIEW | **Nivel 2**, unico que filtra por actividad (I15) |
+
+Los objetos nuevos usan `CREATE TABLE IF NOT EXISTS` + `INSERT OVERWRITE ... BY NAME` (I18). Los
+`SILVER_LEGACY` conservan su `CREATE OR REPLACE TABLE`: cambiarlos no era el alcance.
+
+Contrato de la capa para consumidores: [`contrato_silver.md`](contrato_silver.md).
+Decision de grano: [`adr/0002-grano-historial-consumo.md`](adr/0002-grano-historial-consumo.md).
 
 ### 3.7 `src/midas/framework/control_cargas.py`
 Cliente de `midas_control_cargas` / `midas_log_cargas`. Filtra lecturas por `job_name`.
@@ -97,13 +130,22 @@ El log se inserta por columnas explicitas (id_log es IDENTITY). Estados: `INICIA
 `EXITOSO`, `FALLIDO`.
 
 ### 3.8 `src/midas/framework/chain_runner.py`
-Orquestador delgado de las 8 extracciones. Aborta al primer fallo (la cadena es dependiente).
+Orquestador delgado de las 12 extracciones. Aborta al primer fallo cuando el paso declara
+`abortar_en_fallo=True` (la cadena del Caso 1 es dependiente).
 
 ### 3.9 `notebooks/00_creacion_objetos_midas.py` (task crear_objetos)
 DDL `IF NOT EXISTS` de control/log (con `job_name` en el CREATE), migracion guardada
-(`ALTER ADD COLUMN` si falta), bootstrap MERGE de 8 filas `FULL_CHAINED`
-(`job_name='midas_bronze'`), `query_padre_id` y verificacion que hace `raise` si no hay 8
-filas activas. No crea Bronze/Silver (eso lo hace `ingestion.py`).
+(`ALTER ADD COLUMN` si falta) y **dos** bootstrap MERGE independientes, uno por `job_name`:
+12 filas `FULL_CHAINED` con `job_name='midas_bronze'` y 13 filas Silver con
+`job_name='midas_silver'`. Resuelve `query_padre_id` por `job_name` y verifica con `raise` si el
+conteo activo no cuadra.
+
+> El `ON` del MERGE incluye `job_name`. Sin el, sembrar el segundo bloque pisaria filas del
+> primero: `midas_control_cargas` es una tabla compartida y `tabla_destino` sola no es clave.
+
+Tambien siembra `midas_parametros` (~33 parametros). Los que negocio aun no confirma se siembran
+con `activo=false`: el resolver inyecta un centinela y la feature sale `NULL` en vez de un numero
+inventado. No crea Bronze/Silver (eso lo hacen `ingestion.py` y el DDL de Silver).
 
 ## 4. Bundle y contratos por ambiente
 
@@ -139,11 +181,11 @@ Task `check` (notebook). On-demand, sin schedule. Valida DNS -> TCP -> jar -> `S
 ## 7. Contratos de entrada y salida
 
 ### Entrada
-- Oracle (8 queries de `queries.py`) + parametros de conexion y de control.
+- Oracle (12 queries de `queries.py`) + parametros de conexion y de control.
 
 ### Salida
-- 8 Parquet en `/Volumes/<source_catalog>/<source_schema>/<source_volume>/<source_base_path>`
-- 8 tablas Bronze y 4 tablas Silver en `<catalog_destino>.facturacion`
+- 12 Parquet en `/Volumes/<source_catalog>/<source_schema>/<source_volume>/<source_base_path>`
+- 12 tablas Bronze, 7 tablas Silver y 6 vistas Silver en `<catalog_destino>.facturacion`
 - filas de bitacora en `midas_log_cargas`
 
 ### Contrato de tipos (paridad Parquet, I10)

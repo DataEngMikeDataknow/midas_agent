@@ -260,6 +260,9 @@ def run_query_comentarios_ordenes(df_ordenes_critica_previa: pd.DataFrame):
     df_comentario_ordenes_final = pd.concat(all_results_cometario_ordenes, ignore_index=True)
     save_to_parquet(df_comentario_ordenes_final, _out("comentarios_orden"))
     log.info("--- Proceso extracción: [datos_comentarios_ordenes] Completado ---")
+    # Sin este return, chain_runner recibe None, cuenta 0 y registra EXITOSO con
+    # filas_escritas=0 aunque se hayan extraido miles. El log mentia.
+    return df_comentario_ordenes_final
 
 def run_query_cuentas_cobro(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
     log.info("--- Iniciando proceso extracción: [datos_cuentas_cobro] ---")
@@ -319,6 +322,8 @@ def run_query_detalle_cargos(df_cuentas_cobro: pd.DataFrame):
     df_detalle_cargos_final = pd.concat(all_results_detalle_cuentas_cobro, ignore_index=True)
     save_to_parquet(df_detalle_cargos_final, _out("detalle_cargos"))
     log.info("--- Proceso extracción: [datos_detalle_cargos] Completado ---")
+    # Mismo defecto que comentarios: sin return, el log reportaba 0 filas.
+    return df_detalle_cargos_final
 
 def run_query_detalle_solicitudes(df_datos_basicos: pd.DataFrame) -> pd.DataFrame:
     log.info("--- Iniciando proceso extracción: [detalle_solicitudes] ---")

@@ -43,9 +43,10 @@ class TestRunners(unittest.TestCase):
         # Debe llamar load_parquet_to_delta al menos una vez (tiene una lista de configuraciones)
         self.assertTrue(mock_ingestor_instance.load_parquet_to_delta.called)
 
+    @patch('src.midas.main_transform.ControlCargasClient')
     @patch('src.midas.main_transform.SilverTransformer')
     @patch('src.midas.main_transform.SparkSession.builder.getOrCreate')
-    def test_main_transform(self, mock_spark, mock_transformer_class):
+    def test_main_transform(self, mock_spark, mock_transformer_class, mock_control_class):
         mock_transformer_instance = MagicMock()
         mock_transformer_class.return_value = mock_transformer_instance
 
@@ -60,7 +61,33 @@ class TestRunners(unittest.TestCase):
 
         mock_spark.assert_called_once()
         mock_transformer_class.assert_called_once()
-        mock_transformer_instance.transform_bronze_to_silver.assert_called_with("test_cat", "test_schema")
+        # Catálogo y schema ahora van al constructor, no al método: el transformer
+        # necesita ambos para resolver los placeholders del SQL externalizado.
+        args, kwargs = mock_transformer_class.call_args
+        self.assertEqual(args[1], "test_cat")
+        self.assertEqual(args[2], "test_schema")
+        mock_transformer_instance.transform_bronze_to_silver.assert_called_once_with()
+
+    @patch('src.midas.main_transform.ControlCargasClient')
+    @patch('src.midas.main_transform.SilverTransformer')
+    @patch('src.midas.main_transform.SparkSession.builder.getOrCreate')
+    def test_main_transform_usa_job_name_silver(self, mock_spark, _t, mock_control_class):
+        """Sin este job_name, Silver leería las 12 filas de Bronze del control."""
+        test_args = ["main_transform.py", "--catalog", "c", "--schema", "s"]
+        with patch.object(sys, 'argv', test_args):
+            main_transform.main()
+        self.assertEqual(mock_control_class.call_args.kwargs["job_name"], "midas_silver")
+
+    @patch('src.midas.main_transform.ControlCargasClient')
+    @patch('src.midas.main_transform.SilverTransformer')
+    @patch('src.midas.main_transform.SparkSession.builder.getOrCreate')
+    def test_main_transform_control_por_defecto_al_destino(self, mock_spark, _t, mock_control):
+        """--control_catalog/--control_schema son opcionales: caen al destino."""
+        test_args = ["main_transform.py", "--catalog", "cat_x", "--schema", "sch_x"]
+        with patch.object(sys, 'argv', test_args):
+            main_transform.main()
+        self.assertEqual(mock_control.call_args.kwargs["catalog"], "cat_x")
+        self.assertEqual(mock_control.call_args.kwargs["schema"], "sch_x")
 
 if __name__ == '__main__':
     unittest.main()
