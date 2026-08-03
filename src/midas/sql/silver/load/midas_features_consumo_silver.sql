@@ -103,12 +103,22 @@ solicitudes_periodo AS (
         MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_reconexion} AS INT)
                   AND s.fecha_atencion <= p.fecha_fin_consumo
                  THEN s.fecha_atencion END)                                    AS fecha_ultima_reconexion,
-        MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_reconexion} AS INT)
-                  AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
-                 THEN true ELSE false END)                                     AS solicitud_reconexion_intersecta_periodo,
-        MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_suspension} AS INT)
-                  AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
-                 THEN true ELSE false END)                                     AS solicitud_suspension_intersecta_periodo
+        -- GUARDA EXTERNA OBLIGATORIA. Sin ella estas dos columnas MIENTEN:
+        -- `CASE WHEN <cond NULL> THEN true ELSE false END` devuelve **false**, no NULL.
+        -- Con el parametro sin confirmar la condicion es NULL, el ELSE se dispara, y la
+        -- columna publica `false` en las 3.152 filas — es decir, afirma "no hubo
+        -- reconexion en el periodo" cuando la verdad es "no lo sabemos". Detectado en
+        -- dllo el 2026-08-03 por el bloque S7 del notebook 32.
+        CASE WHEN TRY_CAST({p_tipo_solicitud_reconexion} AS INT) IS NULL THEN NULL
+             ELSE MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_reconexion} AS INT)
+                            AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
+                           THEN true ELSE false END)
+        END                                                                    AS solicitud_reconexion_intersecta_periodo,
+        CASE WHEN TRY_CAST({p_tipo_solicitud_suspension} AS INT) IS NULL THEN NULL
+             ELSE MAX(CASE WHEN s.tipo_solicitud_cod = TRY_CAST({p_tipo_solicitud_suspension} AS INT)
+                            AND s.fecha_atencion BETWEEN p.fecha_ini_consumo AND p.fecha_fin_consumo
+                           THEN true ELSE false END)
+        END                                                                    AS solicitud_suspension_intersecta_periodo
     FROM periodo p
     LEFT JOIN solicitudes s
            ON s.servicio_suscrito = p.servicio_suscrito
@@ -191,8 +201,14 @@ SELECT
     -- ── R3b ──
     digitos_medidor,
     ratio_vuelta_falsa,
-    (consumo_calculado_negativo
-     AND ratio_vuelta_falsa > TRY_CAST({p_tolerancia_vuelta_falsa} AS DOUBLE)) AS flag_vuelta_falsa,
+    -- MISMA GUARDA que en solicitudes_periodo, por la otra cara de la logica ternaria:
+    -- `false AND NULL` es **false**, no NULL. Sin la guarda, toda fila con
+    -- consumo_calculado_negativo = false publicaba `false` (3.108 de 3.152 en dllo),
+    -- afirmando "no es vuelta falsa" con un umbral que negocio no ha confirmado.
+    CASE WHEN TRY_CAST({p_tolerancia_vuelta_falsa} AS DOUBLE) IS NULL THEN NULL
+         ELSE consumo_calculado_negativo
+              AND ratio_vuelta_falsa > TRY_CAST({p_tolerancia_vuelta_falsa} AS DOUBLE)
+    END                                                                       AS flag_vuelta_falsa,
 
     -- ── R4 ──
     hay_lectura_decreciente,

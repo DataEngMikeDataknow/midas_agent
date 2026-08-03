@@ -60,9 +60,16 @@ def chequeo(bloque, nombre, estado, esperado="", obtenido="", nota=""):
         "bloque": bloque, "chequeo": nombre, "estado": estado,
         "esperado": str(esperado), "obtenido": str(obtenido), "nota": nota,
     })
-    print(f"  {icono}{nombre}"
-          + (f"  | esperado={esperado} obtenido={obtenido}" if esperado != "" else "")
-          + (f"  | {nota}" if nota else ""))
+    # Se imprime `obtenido` aunque no haya `esperado`: varios chequeos son puramente
+    # informativos (distribuciones, conteos) y sin esto el número que era el punto del
+    # chequeo no aparecía en el output.
+    if esperado != "":
+        detalle = f"  | esperado={esperado} obtenido={obtenido}"
+    elif obtenido != "":
+        detalle = f"  | {obtenido}"
+    else:
+        detalle = ""
+    print(f"  {icono}{nombre}{detalle}" + (f"  | {nota}" if nota else ""))
 
 
 def existe(obj):
@@ -71,12 +78,28 @@ def existe(obj):
     return spark.catalog.tableExists(f"{PREFIJO}.{obj}")
 
 
+def esquema(obj):
+    """Devuelve (campos, error). NUNCA lanza.
+
+    Una VISTA cuyo SELECT ya no resuelve existe en el catálogo pero revienta al pedirle
+    el esquema. Eso es justo lo que este notebook debe REPORTAR, no sufrir: sin esta
+    guarda, un solo objeto roto aborta la celda y oculta el estado de los otros doce."""
+    try:
+        return spark.table(f"{PREFIJO}.{obj}").schema.fields, None
+    except Exception as e:                                     # noqa: BLE001
+        return [], f"{type(e).__name__}: {str(e).splitlines()[0][:300]}"
+
+
 def columnas(obj):
-    return [f.name for f in spark.table(f"{PREFIJO}.{obj}").schema.fields]
+    campos, _ = esquema(obj)
+    return [f.name for f in campos]
 
 
 def n_filas(obj):
-    return spark.table(f"{PREFIJO}.{obj}").count()
+    try:
+        return spark.table(f"{PREFIJO}.{obj}").count()
+    except Exception:                                          # noqa: BLE001
+        return None
 
 
 def titulo(txt):
@@ -143,12 +166,18 @@ for obj, forma in OBJETOS:
     try:
         det = spark.sql(f"DESCRIBE EXTENDED {PREFIJO}.{obj}") \
                    .filter(F.col("col_name") == "Type").collect()
-        real = det[0]["data_type"].upper() if det else "TABLE"
+        real = det[0]["data_type"].upper() if det else "MANAGED"
     except Exception as e:                                    # noqa: BLE001
         real = f"?({type(e).__name__})"
     _forma_real[obj] = real
+    # DESCRIBE EXTENDED no dice "TABLE": dice MANAGED o EXTERNAL según cómo esté
+    # almacenada. Solo las vistas se reportan como VIEW. Lo que importa aquí es la
+    # DISTINCIÓN tabla/vista, no el modo de almacenamiento.
+    es_vista = real == "VIEW"
+    correcto = (forma == "VIEW") == es_vista
     chequeo("S1", f"{obj} es {forma}",
-            "OK" if real == forma else "FALLA", forma, real)
+            "OK" if correcto else "FALLA", forma, real,
+            nota="" if correcto else "el objeto tiene la forma equivocada")
 
 # COMMAND ----------
 # MAGIC %md ## S2 — Comentarios poblados
@@ -173,7 +202,15 @@ for obj, _ in OBJETOS:
     except Exception:                                          # noqa: BLE001
         pass
 
-    campos = spark.table(f"{PREFIJO}.{obj}").schema.fields
+    campos, error = esquema(obj)
+    if error:
+        # Existe en el catálogo pero su definición ya no resuelve. Típico de una VISTA
+        # cuya tabla fuente perdió una columna: el objeto queda "zombi" — visible en
+        # information_schema, inservible al leerlo.
+        chequeo("S2", f"{obj} se puede leer", "FALLA", "esquema legible", "ERROR",
+                nota=error)
+        continue
+
     sin_com = [f.name for f in campos
                if not (f.metadata or {}).get("comment", "").strip()]
 
@@ -215,12 +252,62 @@ for obj, _ in OBJETOS:
         chequeo("S3", f"{obj} filas", "N/A")
         continue
     n = n_filas(obj)
+    if n is None:
+        # Existe pero no se deja leer. Una vista cuya fuente perdió una columna entra
+        # justo aquí: el catálogo la lista, el SELECT ya no resuelve.
+        chequeo("S3", f"{obj} filas", "FALLA", "> 0", "ILEGIBLE",
+                nota="el objeto existe pero su definición no resuelve (ver S2)")
+        continue
     CONTEOS[obj] = n
     if obj in TABLAS_NUEVAS:
         chequeo("S3", f"{obj} filas", "OK" if n > 0 else "FALLA", "> 0", f"{n:,}")
     else:
         chequeo("S3", f"{obj} filas", "OK" if n > 0 else "REVISAR", "> 0", f"{n:,}",
                 nota="" if n > 0 else "vacío: revisar si la Bronze de origen trajo datos")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ### S3b — Diagnóstico de la cadena del corte facturable
+# MAGIC
+# MAGIC Las dos columnas de la v3 (`estado_corte_facturable*`) viajan por una cadena de
+# MAGIC cuatro eslabones, y **cada uno las puede perder sin dar error**:
+# MAGIC
+# MAGIC `QUERY_DATOS_BASICOS` → `..._bronze` (por `ALTER ADD COLUMNS`) → `..._silver`
+# MAGIC (`SELECT *`) → las dos vistas que las proyectan.
+# MAGIC
+# MAGIC Si una vista falló arriba con `UNRESOLVED_COLUMN`, este bloque dice **en qué eslabón**
+# MAGIC se rompió. El caso típico: Bronze se recreó desde un Parquet viejo (extraído con
+# MAGIC código anterior a la v3) y perdió las dos columnas; entonces `SELECT *` las pierde
+# MAGIC también y la vista que ya existía deja de resolver.
+
+# COMMAND ----------
+titulo("S3b - ¿Dónde se rompe la cadena del corte facturable?")
+
+CADENA = [
+    ("midas_datos_basicos_producto_bronze", "lo alimenta el ALTER ADD COLUMNS de crear_objetos"),
+    ("midas_datos_basicos_producto_silver", "CREATE OR REPLACE TABLE ... SELECT * de Bronze"),
+    ("midas_ordenes_calidad_pendientes_silver", "LEFT JOIN contra basicos_bronze (I13, al final)"),
+    ("midas_datos_servicios_contrato_silver", "vista sobre basicos_silver"),
+    ("midas_ordenes_variacion_consumo_silver", "vista sobre ordenes_calidad_pendientes_silver"),
+]
+for obj, como in CADENA:
+    if not existe(obj):
+        chequeo("S3b", f"{obj}", "N/A", nota=como)
+        continue
+    cols, error = esquema(obj)
+    if error:
+        chequeo("S3b", f"{obj}", "FALLA", "legible", "ERROR", nota=f"{como} | {error}")
+        continue
+    nombres = [f.name for f in cols]
+    tiene = "estado_corte_facturable" in nombres
+    chequeo("S3b", f"{obj} tiene estado_corte_facturable",
+            "OK" if tiene else "FALLA", "sí", "sí" if tiene else "NO",
+            nota=como if tiene else f"{como} | ROTO AQUÍ: {len(nombres)} columnas")
+
+print("\n  Cómo leerlo: el PRIMER FALLA de arriba hacia abajo es el eslabón que hay que")
+print("  arreglar; los de más abajo son consecuencia, no causa.")
+print("  Si el primero es la Bronze, la solución es re-extraer de Oracle con el código")
+print("  de la v3 y volver a correr crear_objetos (que repone las columnas con ALTER).")
 
 # COMMAND ----------
 # MAGIC %md ## S4 — Unicidad del grano
@@ -353,13 +440,13 @@ titulo("S7 - features_consumo")
 
 OBJ = "midas_features_consumo_silver"
 
-# Deben ser 100% NULL: su parámetro está sembrado con activo=false.
+# Deben ser 100% NULL: su parámetro sigue sembrado con activo=false.
+#
+# Los tipos de solicitud 300 y 56 se ACTIVARON el 2026-08-03 tras confirmarlos contra
+# los datos (Bronze trae el texto literal 'Reconexion por Pago' / 'Suspension por no
+# Pago'), así que las 4 columnas de R5 ya NO deben salir NULL: pasaron a CON_SENAL.
 NULL_ESPERADO = [
-    ("flag_vuelta_falsa",                       "tolerancia_vuelta_falsa"),
-    ("fecha_ultima_reconexion",                 "tipo_solicitud_reconexion"),
-    ("dias_desde_reconexion",                   "tipo_solicitud_reconexion"),
-    ("solicitud_reconexion_intersecta_periodo",  "tipo_solicitud_reconexion"),
-    ("solicitud_suspension_intersecta_periodo",  "tipo_solicitud_suspension"),
+    ("flag_vuelta_falsa", "tolerancia_vuelta_falsa"),
 ]
 # NO deben ser 100% NULL: si lo son, la regla no está midiendo nada.
 CON_SENAL = [
@@ -367,6 +454,9 @@ CON_SENAL = [
     "hay_lectura_decreciente", "n_periodos_lectura_decreciente_consecutivos",
     "promedio_periodos_previos", "n_periodos_usados_en_promedio",
     "desviacion_vs_promedio_pct", "flag_investigacion", "valor_cargos_periodo",
+    # R5, encendidas el 2026-08-03. Si vuelven a salir 100% NULL es que alguien
+    # desactivó los parámetros, no que la regla no aplique.
+    "solicitud_reconexion_intersecta_periodo", "solicitud_suspension_intersecta_periodo",
 ]
 
 if not existe(OBJ):

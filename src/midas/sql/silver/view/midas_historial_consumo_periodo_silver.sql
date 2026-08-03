@@ -13,7 +13,40 @@
 -- `n_medidores_periodo` se expone aqui a proposito: la vista misma delata el cambio de
 -- medidor, que es justo lo que un consumidor "por periodo" podria pasar por alto.
 -- =============================================================================
-CREATE OR REPLACE VIEW {catalog}.{schema}.midas_historial_consumo_periodo_silver
+CREATE OR REPLACE VIEW {catalog}.{schema}.midas_historial_consumo_periodo_silver (
+    servicio_suscrito       COMMENT 'PK.',
+    id_periodo_consumo      COMMENT 'PK.',
+    tipo_consumo_cod        COMMENT 'PK. 3 activa, 6 reactiva.',
+
+    tipo_consumo            COMMENT 'codigo-descripcion. Constante dentro del grupo: el MAX no elige, solo colapsa.',
+    id_periodo_facturacion  COMMENT 'Periodo de facturacion del consumo.',
+    anio_facturacion        COMMENT 'Anio de facturacion.',
+    mes_facturacion         COMMENT 'Mes de facturacion.',
+    ciclo_facturacion       COMMENT 'Ciclo de facturacion.',
+    fecha_ini_consumo       COMMENT 'Inicio de la ventana del periodo.',
+    fecha_fin_consumo       COMMENT 'Fin de la ventana del periodo. Es el criterio de orden temporal.',
+    dias_consumo            COMMENT 'Dias del periodo.',
+
+    n_medidores_periodo     COMMENT 'Medidores REALES distintos en el periodo. > 1 es la deteccion mas directa del cambio de medidor (Casos 3/4).',
+    medidores               COMMENT 'Los medidores reales, ordenados. Excluye el centinela: un medidor desconocido no es un medidor distinto.',
+    algun_medidor_desconocido COMMENT 'true si alguna fila del periodo no traia medidor. Sirve para saber si medidores esta incompleto.',
+
+    consumo_facturado_periodo COMMENT 'Consumo cobrado del PERIODO (metodo 4). Constante dentro del grupo: viene de consumos, no de la suma por medidor.',
+    consumo_facturado       COMMENT 'SUMA del consumo facturado de todos los medidores. ESTA suma es la razon de ser de la vista: es lo que un consumidor haria mal si agregara por su cuenta.',
+    consumo_calculado       COMMENT 'Suma del consumo por diferencia de lecturas de todos los medidores.',
+    cuadra_consumo_periodo  COMMENT 'true si consumo_facturado_periodo coincide con la suma por medidor, dentro de la tolerancia parametrizada.',
+
+    hay_consumo_calculado_negativo COMMENT 'Algun medidor dio consumo calculado negativo. Se expone como bandera para que la SUMA de arriba no lo esconda: dos medidores con +100 y -100 suman 0 y el problema desaparece.',
+    hay_lectura_decreciente COMMENT 'Algun medidor tuvo lectura actual menor que la anterior (Caso 9).',
+
+    calificacion            COMMENT 'Calificacion del consumo. Ya venia colapsada al grano del periodo en la tabla: el MAX no elige. NULL con n_calificaciones > 1 significa "hubo mas de una", no "no hay dato".',
+    n_calificaciones        COMMENT 'Cuantas calificaciones distintas habia. > 1 explica el NULL de la columna anterior.',
+    funcion_calculo         COMMENT 'Funcion de calculo del consumo. Es la fuente MAS FIABLE del flag de investigacion: vive en la fila del propio consumo.',
+    observaciones_lectura   COMMENT 'Conjunto de observaciones del lector en el periodo, de todos los medidores y las 3 posiciones.',
+
+    run_id                  COMMENT 'run_id de midas_log_cargas que produjo las filas de origen.',
+    fecha_carga_silver      COMMENT 'Marca de materializacion de la tabla de origen.'
+)
 COMMENT 'Consumo agregado al periodo, colapsando el medidor. Usa esta vista si NO te importa el medidor: evita duplicar el consumo en los periodos con cambio de medidor. Si SI te importa, lee midas_historial_consumo_silver.'
 AS
 SELECT

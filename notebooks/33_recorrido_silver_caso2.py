@@ -648,9 +648,12 @@ display(spark.sql(f"""
      WHERE table_schema = '{SCHEMA}' AND table_name LIKE 'midas_%_bronze'
      ORDER BY last_altered
 """))
-print("  PENDIENTE conocido: consumos_contrato, investigacion_consumo y")
-print("  perdidas_no_operacionales se quedaron rezagadas respecto del resto.")
-print("  Los objetos Silver que las leen publican datos viejos sin avisar.")
+print("  CERRADO el 2026-08-03: las 12 Bronze ACTIVAS están frescas (misma corrida).")
+print("  Las 2 que aparecen rezagadas son las RETIRADAS en la v3 —")
+print("  midas_dim_estado_corte_facturable_bronze y midas_datos_servicios_contrato_bronze —")
+print("  que están desactivadas en el control, así que nada las escribe. Es lo esperado.")
+print("  Que sigan existiendo confirma que scripts/migracion_v3_limpieza.sql NO se ha")
+print("  ejecutado: su DROP sigue pendiente y es una decisión, no un olvido.")
 
 # COMMAND ----------
 titulo("5.2 - ¿Hay un segundo escritor sobre la tabla adoptada?")

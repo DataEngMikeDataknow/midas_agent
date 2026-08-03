@@ -186,36 +186,67 @@ irregularidad, en qué ventana).
 
 ## 5. Lo que hoy sale `NULL` y por qué
 
-Cuatro columnas salen `NULL` en toda la tabla hasta que negocio confirme el parámetro:
+Hoy queda **una sola** columna en `NULL` por parámetro sin confirmar:
 
 | Columna | Parámetro sin confirmar |
 |---|---|
 | `flag_vuelta_falsa` | `tolerancia_vuelta_falsa` |
-| `fecha_ultima_reconexion`, `dias_desde_reconexion` | `tipo_solicitud_reconexion` |
-| `solicitud_reconexion_intersecta_periodo` | `tipo_solicitud_reconexion` |
-| `solicitud_suspension_intersecta_periodo` | `tipo_solicitud_suspension` |
 
-Sobre los tipos de solicitud: el plan original los sembraba invertidos
-(`suspension=300`, `reconexion=56`). Según el diccionario del proyecto es al revés —
-**`300` = Reconexión por Pago**, **`56` = Suspensión por no Pago**. Se sembraron **corregidos**
-y **inactivos**: preferimos un `NULL` honesto a un número calculado con el código equivocado.
+**Los tipos de solicitud se cerraron el 2026-08-03 contra los datos, no contra una reunión.**
+Bronze resuelve código-descripción inline (I11), así que el texto literal ya estaba en la tabla:
+`300 - Reconexión por Pago` (231 filas) y `56 - Suspensión por no Pago` (269). El plan original
+los traía **invertidos**; quedaron sembrados corregidos y ahora **activos**. Eso enciende las
+cuatro columnas de R5. De paso se confirmó `100207 - Solicitud de Investigación de Consumos`
+(221 filas), que se sembró como tercera fuente documentada del flag de investigación.
 
-Estos `NULL` **no son un defecto**. Se activan con un `UPDATE` a `midas_parametros`; no requieren
-despliegue ni cambio de código.
+**Por qué `tolerancia_vuelta_falsa` sigue apagado, y no es por trámite.** De las 44 filas con
+consumo calculado negativo en `dllo`, **todas** tienen `ratio_vuelta_falsa` por debajo de
+**0,067** (p50 = 0,0007, máx = 0,067). Cualquier umbral razonable —0,5 o 0,95— detectaría
+**cero** casos. Activarlo hoy produciría una columna `false` en todas las filas que nadie podría
+validar. La pregunta para negocio no es "¿qué umbral?", es: *¿significa esto que no hay vueltas
+falsas en esta muestra, o que la fórmula `consumo_facturado / 10^dígitos` no captura lo que
+ustedes llaman vuelta falsa?*
+
+### El `NULL` tiene que sobrevivir a la lógica ternaria
+
+Un parámetro apagado **no basta** para que la columna salga `NULL`. SQL tiene tres valores y dos
+construcciones traicionan:
+
+- `CASE WHEN <cond NULL> THEN true ELSE false END` → devuelve **`false`**, no `NULL`.
+- `false AND NULL` → devuelve **`false`**, no `NULL`.
+
+Las dos fabrican un negativo que se lee como hecho confirmado. Ocurrió: en `dllo` las columnas de
+R5 publicaron `false` en las 3.152 filas y `flag_vuelta_falsa` en 3.108, afirmando *"no hubo
+reconexión"* cuando la verdad era *"no lo sabemos"*. Toda bandera que dependa de un parámetro
+lleva ahora una **guarda externa explícita** sobre el parámetro.
 
 ---
 
 ## 6. `PENDIENTE-NEG` — preguntas abiertas para negocio
 
-1. **`delta_valor_pct` está a un grano distinto al de su fuente.** La cuenta de cobro es por
+1. **`unidades_consumo_cobradas` no está midiendo el consumo.** Filtra por
+   `causal_cod = causal_consumo_normal (-1)`, y los datos del 2026-08-03 muestran que esa causal
+   es el **99% de todas las líneas** (21.596 de 21.844): no aísla el consumo, solo excluye las
+   causales especiales (74 PNO, 73 abono a diferido, 55 descarga terceros). Hoy la columna suma
+   unidades de conceptos heterogéneos —consumo, cargo fijo, alumbrado— cuyas unidades ni siquiera
+   son comparables. Lo que distingue el consumo es el **concepto**: existen al menos
+   `87 - CONSUMO SIN IVA` y `90 - CONSUMO ACTIVA`, de 155 conceptos. **Falta la lista completa de
+   conceptos de consumo** para corregir el filtro. Afecta a `unidades_consumo_cobradas` y
+   `delta_unidades_consumo_pct`.
+2. **`delta_valor_pct` está a un grano distinto al de su fuente.** La cuenta de cobro es por
    `(SS, periodo)`, **sin tipo de consumo**, así que el valor **se repite** en activa y reactiva.
-   ¿Debe repartirse por tipo usando el concepto del cargo?
-2. **`tolerancia_vuelta_falsa`** — qué ratio se considera vuelta falsa.
-3. **Tipos de solicitud de suspensión y reconexión** — confirmar `300` y `56`.
-4. **El concepto `87`** como cargo de consumo normal es **inferencia sobre capturas de pantalla**,
-   no dato confirmado.
-5. **`estado_pno`** va crudo: no se verificó si tiene catálogo asociado. Si lo tuviera, se
+   El reparto por tipo **sí es viable**: el 96,9% de las cuentas (4.340 de 4.480) tiene más de un
+   concepto, así que hay granularidad suficiente. Falta el mapeo concepto → tipo de consumo.
+3. **`tolerancia_vuelta_falsa`** — ver §5: la pregunta cambió de "qué umbral" a "si la fórmula
+   mide lo que ustedes llaman vuelta falsa".
+4. **`estado_pno`** tiene **un único valor `F`** en las 12 filas de `dllo`, crudo y sin
+   descripción. Hoy no discrimina nada. Confirmar si existe catálogo: si lo hubiera, se
    resolvería inline en Bronze (I11), no en Silver.
+
+**Cerrado el 2026-08-03 con datos:** los tipos de solicitud `300`/`56` (§5), el tipo de
+investigación `100207`, y la cobertura de periodo en cargos — el 18,76% sin
+`id_periodo_consumo` son diferidos, intereses y trabajos, que por naturaleza no están atados a un
+periodo de consumo. No es una brecha de calidad.
 
 ---
 

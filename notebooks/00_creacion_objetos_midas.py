@@ -468,7 +468,7 @@ _PARAMS = [
     ("ventana",    "ventana_promedio_max_periodos", "6",    "INT", "tope de periodos hacia atras al buscar los 5 con lectura correcta", True),
 
     # ── Cargos ──
-    ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "cargcaca del consumo normal (aisla el consumo del resto de cargos)", True),
+    ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "OJO: NO aisla el consumo. Datos 2026-08-03: la causal -1 es el 99% de las lineas (21.596 de 21.844); solo excluye las causales especiales (74 PNO, 73 abono a diferido, 55 descarga terceros). Lo que distingue el consumo es el CONCEPTO, no la causal. Ver PENDIENTE-NEG en contrato_silver.md", True),
     ("cargo",      "causal_pno",                   "74",    "INT",    "causal de perdida no operacional en cargos: DETECTA la PNO", True),
     ("cargo",      "programa_facturacion_normal",  "5",     "INT",    "5 = FGCA, proceso normal de facturacion. Cualquier otro programa es un cargo inyectado por otra funcionalidad", True),
     ("cargo",      "programa_pno",                 "307",   "INT",    "programa de PNO en cargos", True),
@@ -498,8 +498,9 @@ _PARAMS = [
     ("lectura",    "periodos_lectura_decreciente", "2",    "INT",    "PENDIENTE-NEG. Cuantos periodos consecutivos hacen 'sostenido'", False),
     # OJO: el prompt de Silver traia estos dos INVERTIDOS. Segun el diccionario del
     # proyecto, 300 = Reconexion por Pago y 56 = Suspension por no Pago.
-    ("solicitud",  "tipo_solicitud_reconexion",    "300",  "INT",    "PENDIENTE-NEG. 300 = Reconexion por Pago (ps_package_type)", False),
-    ("solicitud",  "tipo_solicitud_suspension",    "56",   "INT",    "PENDIENTE-NEG. 56 = Suspension por no Pago", False),
+    ("solicitud",  "tipo_solicitud_reconexion",    "300",  "INT",    "CONFIRMADO con datos 2026-08-03: el valor literal en Bronze es '300 - Reconexion por Pago' (231 filas en dllo). El plan original lo traia invertido con suspension", True),
+    ("solicitud",  "tipo_solicitud_suspension",    "56",   "INT",    "CONFIRMADO con datos 2026-08-03: el valor literal en Bronze es '56 - Suspension por no Pago' (269 filas en dllo)", True),
+    ("solicitud",  "tipo_solicitud_investigacion", "100207", "INT",  "CONFIRMADO con datos 2026-08-03: '100207 - Solicitud de Investigacion de Consumos' (221 filas). Es UNA de las 3 fuentes del flag de investigacion; la mas fiable sigue siendo funcion_calculo, que vive en la fila del propio consumo", True),
 ]
 _prows = ",\n        ".join(
     f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)}, {_sql_val(act)})"
