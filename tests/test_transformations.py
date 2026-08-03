@@ -350,6 +350,39 @@ class TestSeedContraArchivos(unittest.TestCase):
         ddl = (SQL_DIR / "ddl" / "midas_features_consumo_silver.sql").read_text(encoding="utf-8")
         self.assertIn("unidades_consumo_sin_legalizar", ddl)
 
+    def test_el_comentario_de_la_migracion_coincide_con_el_ddl(self):
+        """REGRESIÓN (dllo, 2026-08-03): la columna se agregó SIN comentario y el
+        notebook 32 reportó 44/45.
+
+        `ALTER TABLE ADD COLUMNS` sin COMMENT deja la columna muda, y el COMMENT del DDL
+        nunca la alcanza porque `CREATE TABLE IF NOT EXISTS` no hace nada contra una
+        tabla existente. El texto vive en dos sitios por necesidad —el DDL sirve a los
+        ambientes nuevos y la migración a los ya desplegados— así que lo único que evita
+        que se separen es este test."""
+        import ast
+
+        notebook = (Path(__file__).resolve().parents[1]
+                    / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+        ini = notebook.index("_MIGRACION_SILVER = {")
+        migracion = ast.literal_eval(notebook[ini + len("_MIGRACION_SILVER = "):
+                                              notebook.index("\n}", ini) + 2])
+
+        for tabla, columnas in migracion.items():
+            ddl = (SQL_DIR / "ddl" / f"{tabla}.sql").read_text(encoding="utf-8")
+            for entrada in columnas:
+                self.assertEqual(len(entrada), 3,
+                                 f"{tabla}: cada entrada debe ser (columna, tipo, comentario)")
+                col, _tipo, comentario = entrada
+                with self.subTest(tabla=tabla, columna=col):
+                    self.assertTrue(comentario.strip(), "el comentario no puede ir vacío")
+                    # El DDL escribe COMMENT 'texto'; se compara el texto exacto.
+                    esperado = re.search(rf"^\s+{col}\s+\w+\s+COMMENT\s+'(.*?)',?$",
+                                         ddl, re.M | re.S)
+                    self.assertIsNotNone(esperado, f"{col} no está en el DDL con COMMENT")
+                    self.assertEqual(comentario, esperado.group(1).replace("''", "'"),
+                                     f"{col}: el comentario de la migración y el del DDL "
+                                     f"se separaron")
+
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""
         sembrados = {key for _, key, _ in _seed_silver()}

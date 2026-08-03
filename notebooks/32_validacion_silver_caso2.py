@@ -522,6 +522,102 @@ else:
                      "ventana (6), no exactamente los 5 más recientes")
 
 # COMMAND ----------
+# MAGIC %md
+# MAGIC ## S7b — ¿El filtro por concepto hace lo que dice?
+# MAGIC
+# MAGIC `unidades_consumo_cobradas` filtraba por `causal_cod = -1`, que resultó ser el
+# MAGIC **99% de las líneas de cargo**: no aislaba el consumo, solo excluía las causales
+# MAGIC especiales. Sumaba unidades de conceptos que ni siquiera son comparables —consumo,
+# MAGIC cargo fijo, alumbrado, contribuciones—.
+# MAGIC
+# MAGIC Desde el 2026-08-03 filtra por **concepto**. Que la columna exista y la carga
+# MAGIC termine en verde **no prueba** que el filtro sea el correcto; eso se prueba
+# MAGIC recomputando desde `midas_historial_cargos_silver` y comparando.
+
+# COMMAND ----------
+titulo("S7b - Reconciliación del filtro por concepto")
+
+OBJ_FC = "midas_features_consumo_silver"
+OBJ_CG = "midas_historial_cargos_silver"
+
+# Debe coincidir con el parámetro cargo/conceptos_consumo_medido.
+CONCEPTOS_MEDIDO = [87, 90, 546, 550, 552]
+CONCEPTO_SIN_LEGALIZAR = 899
+
+if not (existe(OBJ_FC) and existe(OBJ_CG)):
+    chequeo("S7b", "features y cargos disponibles", "N/A")
+else:
+    fc = spark.table(f"{PREFIJO}.{OBJ_FC}")
+    cg = spark.table(f"{PREFIJO}.{OBJ_CG}")
+
+    # El parámetro manda: si alguien lo cambia, este bloque debe seguirlo.
+    try:
+        fila_par = spark.sql(f"""
+            SELECT valor FROM {PREFIJO}.midas_parametros
+             WHERE dominio = 'cargo' AND clave = 'conceptos_consumo_medido' AND activo
+        """).collect()
+        del_param = sorted(int(x) for x in fila_par[0][0].split(",")) if fila_par else None
+    except Exception:                                          # noqa: BLE001
+        del_param = None
+    chequeo("S7b", "la lista del notebook coincide con midas_parametros",
+            "OK" if del_param == sorted(CONCEPTOS_MEDIDO) else "REVISAR",
+            sorted(CONCEPTOS_MEDIDO), del_param,
+            nota="" if del_param else "no se pudo leer el parámetro")
+
+    # ── 1. Reconciliación exacta ────────────────────────────────────────────────
+    # El grano de cargos es (SS, periodo); el de features agrega tipo_consumo. Por eso
+    # se compara contra el DISTINCT de features: el valor se replica por tipo.
+    esperado = (cg.filter(F.col("concepto_cod").isin(CONCEPTOS_MEDIDO))
+                  .groupBy("servicio_suscrito", "id_periodo_consumo")
+                  .agg(F.sum("unidades").alias("esperado")))
+    real = (fc.select("servicio_suscrito", "id_periodo_consumo",
+                      F.col("unidades_consumo_cobradas").alias("real")).distinct())
+    cruce = esperado.join(real, ["servicio_suscrito", "id_periodo_consumo"], "inner")
+    n_difieren = cruce.filter(
+        F.abs(F.coalesce("esperado", F.lit(0.0)) - F.coalesce("real", F.lit(0.0))) > 0.001
+    ).count()
+    chequeo("S7b", "unidades_consumo_cobradas reconcilia con cargos",
+            "OK" if n_difieren == 0 else "FALLA", "0 diferencias", n_difieren,
+            nota="" if n_difieren == 0 else "el filtro publicado NO es el de la lista")
+
+    # ── 2. ¿El cambio surtió efecto? ────────────────────────────────────────────
+    # Con la definición vieja el total debe ser MAYOR: incluía casi todo.
+    tot_nuevo = (cg.filter(F.col("concepto_cod").isin(CONCEPTOS_MEDIDO))
+                   .agg(F.sum("unidades")).collect()[0][0] or 0)
+    tot_viejo = (cg.filter(F.col("causal_cod") == -1)
+                   .agg(F.sum("unidades")).collect()[0][0] or 0)
+    chequeo("S7b", "la definición nueva difiere de la vieja",
+            "OK" if abs(tot_viejo - tot_nuevo) > 0.001 else "FALLA",
+            "totales distintos",
+            f"nuevo={tot_nuevo:,.0f} vs viejo={tot_viejo:,.0f}",
+            nota="si fueran iguales, el filtro nuevo no se estaría aplicando")
+
+    # ── 3. El 899 va aparte, nunca dentro ───────────────────────────────────────
+    chequeo("S7b", "899 fuera de la lista de consumo medido",
+            "OK" if CONCEPTO_SIN_LEGALIZAR not in CONCEPTOS_MEDIDO else "FALLA",
+            "excluido", "excluido" if CONCEPTO_SIN_LEGALIZAR not in CONCEPTOS_MEDIDO else "INCLUIDO")
+
+    ss_899 = (cg.filter(F.col("concepto_cod") == CONCEPTO_SIN_LEGALIZAR)
+                .select("servicio_suscrito", "id_periodo_consumo").distinct())
+    con_valor = fc.filter(F.col("unidades_consumo_sin_legalizar").isNotNull()) \
+                  .select("servicio_suscrito", "id_periodo_consumo").distinct()
+    huerfanas = con_valor.join(ss_899, ["servicio_suscrito", "id_periodo_consumo"],
+                               "left_anti").count()
+    chequeo("S7b", "unidades_consumo_sin_legalizar solo donde hay concepto 899",
+            "OK" if huerfanas == 0 else "FALLA", "0 huérfanas", huerfanas,
+            nota=f"{ss_899.count():,} (SS, periodo) tienen cargo 899 en dllo")
+
+    # ── 4. Inventario: qué quedó dentro y qué fuera ─────────────────────────────
+    print("\n  Conceptos de cargos, marcando cuáles entran al filtro:")
+    display(cg.groupBy("concepto_cod", "concepto")
+              .agg(F.count("*").alias("lineas"),
+                   F.sum("unidades").alias("unidades"),
+                   F.sum("valor").alias("valor"))
+              .withColumn("en_filtro", F.col("concepto_cod").isin(CONCEPTOS_MEDIDO))
+              .withColumn("es_sin_legalizar", F.col("concepto_cod") == CONCEPTO_SIN_LEGALIZAR)
+              .orderBy(F.col("unidades").desc_nulls_last()))
+
+# COMMAND ----------
 # MAGIC %md ## S8 — Nivel 2: una sola actividad, y sale de parámetros
 
 # COMMAND ----------

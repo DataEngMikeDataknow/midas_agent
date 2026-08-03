@@ -184,12 +184,36 @@ for tabla, columnas in _MIGRACION_V3.items():
 # no tiene. Sin este bloque, agregar una feature rompe la carga en vez de agregarla.
 #
 # Mismo patrón guardado que Bronze: solo se altera lo que falta, así que es idempotente.
+def _sql_val(x):
+    """Literal SQL seguro. Definido AQUI y no mas abajo porque la migracion de Silver
+    (la primera celda que lo usa) corre antes que el bootstrap del control: en un
+    notebook las celdas se ejecutan en orden."""
+    if x is None:
+        return "NULL"
+    if isinstance(x, bool):          # antes que int: bool ES subclase de int
+        return "true" if x else "false"
+    if isinstance(x, int):
+        return str(x)
+    return "'" + str(x).replace("'", "''") + "'"
+
+
+# (columna, tipo, comentario). El comentario NO es opcional: `ALTER TABLE ADD COLUMNS`
+# sin COMMENT deja la columna muda, y el COMMENT del DDL nunca la alcanza porque
+# `CREATE TABLE IF NOT EXISTS` es no-op contra una tabla que ya existe. Asi se perdio el
+# comentario de unidades_consumo_sin_legalizar en dllo (44/45 en el notebook 32).
+#
+# El texto debe ser IDENTICO al del DDL correspondiente; hay un test que lo exige.
 _MIGRACION_SILVER = {
     # 2026-08-03: unidades_consumo_cobradas pasó a filtrar por CONCEPTO en vez de por
     # causal (-1 era el 99% de las líneas y no aislaba el consumo). El consumo sin
     # legalizar se publica aparte para no contaminar la línea base de R2.
     "midas_features_consumo_silver": [
-        ("unidades_consumo_sin_legalizar", "DOUBLE"),
+        ("unidades_consumo_sin_legalizar", "DOUBLE",
+         "R2. Unidades del concepto 899 CONSUMO ENERGIA SIN LEGALIZAR. Va SEPARADO de "
+         "unidades_consumo_cobradas a proposito: es consumo irregular (tipicamente "
+         "recuperacion) y sumarlo a la linea base taparia el Caso 17 en vez de revelarlo. "
+         "Si esta poblado junto con un salto en delta_valor_pct, esa es la explicacion "
+         "del salto."),
     ],
 }
 
@@ -198,14 +222,28 @@ for tabla, columnas in _MIGRACION_SILVER.items():
     if not spark.catalog.tableExists(full):
         print(f"--  {tabla}: no existe todavía, la creará el DDL de Silver (sin ALTER)")
         continue
-    existentes = [f.name for f in spark.table(full).schema.fields]
-    faltantes = [(c, t) for (c, t) in columnas if c not in existentes]
-    if not faltantes:
-        print(f"OK  {tabla}: columnas nuevas ya presentes")
-        continue
-    cols_sql = ", ".join(f"{c} {t}" for c, t in faltantes)
-    spark.sql(f"ALTER TABLE {full} ADD COLUMNS ({cols_sql})")
-    print(f"OK  {tabla}: +{[c for c, _ in faltantes]}")
+
+    campos = {f.name: (f.metadata or {}).get("comment", "") or ""
+              for f in spark.table(full).schema.fields}
+
+    # 1. Columnas que no existen: se agregan YA CON su comentario.
+    faltantes = [(c, t, d) for (c, t, d) in columnas if c not in campos]
+    if faltantes:
+        cols_sql = ", ".join(f"{c} {t} COMMENT {_sql_val(d)}" for c, t, d in faltantes)
+        spark.sql(f"ALTER TABLE {full} ADD COLUMNS ({cols_sql})")
+        print(f"OK  {tabla}: +{[c for c, _, _ in faltantes]} (con comentario)")
+
+    # 2. Columnas que YA existen pero con el comentario vacío o desactualizado. Este
+    #    paso es el que repara lo ya desplegado: sin él, la idempotencia por existencia
+    #    de columna hace que el comentario no llegue nunca.
+    desalineadas = [(c, d) for (c, t, d) in columnas
+                    if c in campos and campos[c] != d]
+    for col, desc in desalineadas:
+        spark.sql(f"ALTER TABLE {full} ALTER COLUMN {col} COMMENT {_sql_val(desc)}")
+        print(f"OK  {tabla}.{col}: comentario aplicado/actualizado")
+
+    if not faltantes and not desalineadas:
+        print(f"OK  {tabla}: columnas y comentarios ya alineados")
 
 # COMMAND ----------
 # ───── Bootstrap del control (Caso 1 + Caso 2) ─────
@@ -235,16 +273,6 @@ SEED = [
     ("midas_datos_perdidas_no_operacionales_bronze", "QUERY_PERDIDAS_NO_OPERACIONALES", "FULL_CHAINED", 25, "servicio_suscrito"),
 ]
 N_ESPERADO = len(SEED)  # fuente única de verdad para la verificación (no cablear dos veces)
-
-
-def _sql_val(x):
-    if x is None:
-        return "NULL"
-    if isinstance(x, bool):          # antes que int: bool ES subclase de int
-        return "true" if x else "false"
-    if isinstance(x, int):
-        return str(x)
-    return "'" + str(x).replace("'", "''") + "'"
 
 
 def _merge_seed(seed, job_name, comentario):
