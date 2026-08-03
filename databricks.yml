@@ -158,6 +158,19 @@ targets:
             # forma idempotente el plano de control. No usa Oracle → sin libraries.
             - task_key: crear_objetos
               existing_cluster_id: ${var.cluster_id}
+              # TIMEOUTS Y REINTENTOS (F09). Antes no habia ninguno: una llamada
+              # colgada a Oracle retenia el driver indefinidamente y un corte de red
+              # transitorio tumbaba la cadena diaria completa.
+              #
+              # retry_on_timeout: false en TODAS: un timeout significa que algo esta
+              # atascado, y reintentar a ciegas duplica el dano en vez de resolverlo.
+              # Los reintentos son para fallos transitorios, no para cuelgues.
+              # Metadata: MERGE, CREATE IF NOT EXISTS y ALTER guardados. Idempotente,
+              # asi que reintentar es seguro y barato.
+              timeout_seconds: 1800
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/00_creacion_objetos_midas.py
                 base_parameters:
@@ -168,6 +181,13 @@ targets:
               depends_on:
                 - task_key: crear_objetos
               existing_cluster_id: ${var.cluster_id}
+              # 3h: es la task larga (una query por instalacion/servicio/cuenta contra
+              # Oracle). UN solo reintento: repetir una extraccion de horas es caro y,
+              # si Oracle esta caido, el segundo intento tampoco va a funcionar.
+              timeout_seconds: 10800
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/10_extraer_datos_oracle.py
                 base_parameters:
@@ -184,6 +204,11 @@ targets:
               depends_on:
                 - task_key: extraer_datos_oracle
               existing_cluster_id: ${var.cluster_id}
+              # Parquet -> Bronze con insertInto(overwrite=True): idempotente.
+              timeout_seconds: 3600
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_ingestion.py
                 parameters:
@@ -209,6 +234,12 @@ targets:
               depends_on:
                 - task_key: actualizar_ordenes_calidad
               existing_cluster_id: ${var.cluster_id}
+              # DDL + INSERT OVERWRITE + vistas: idempotente. La verificacion previa
+              # aborta antes de tocar datos si falta un .sql.
+              timeout_seconds: 3600
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_transform.py
                 parameters:
@@ -292,6 +323,12 @@ targets:
             # forma idempotente el plano de control. No usa Oracle → sin libraries.
             - task_key: crear_objetos
               job_cluster_key: midas_cluster
+              # Metadata: MERGE, CREATE IF NOT EXISTS y ALTER guardados. Idempotente,
+              # asi que reintentar es seguro y barato.
+              timeout_seconds: 1800
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/00_creacion_objetos_midas.py
                 base_parameters:
@@ -303,6 +340,13 @@ targets:
               depends_on:
                 - task_key: crear_objetos
               job_cluster_key: midas_cluster
+              # 3h: es la task larga (una query por instalacion/servicio/cuenta contra
+              # Oracle). UN solo reintento: repetir una extraccion de horas es caro y,
+              # si Oracle esta caido, el segundo intento tampoco va a funcionar.
+              timeout_seconds: 10800
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/10_extraer_datos_oracle.py
                 base_parameters:
@@ -319,6 +363,11 @@ targets:
               depends_on:
                 - task_key: extraer_datos_oracle
               job_cluster_key: midas_cluster
+              # Parquet -> Bronze con insertInto(overwrite=True): idempotente.
+              timeout_seconds: 3600
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_ingestion.py
                 parameters:
@@ -344,6 +393,12 @@ targets:
               depends_on:
                 - task_key: actualizar_ordenes_calidad
               job_cluster_key: midas_cluster
+              # DDL + INSERT OVERWRITE + vistas: idempotente. La verificacion previa
+              # aborta antes de tocar datos si falta un .sql.
+              timeout_seconds: 3600
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_transform.py
                 parameters:
@@ -380,6 +435,12 @@ targets:
           tasks:
             - task_key: check
               job_cluster_key: midas_cluster
+              # Diagnostico de conectividad: CERO reintentos. Si falla, el fallo ES el
+              # resultado que se buscaba; reintentar solo oculta el sintoma.
+              timeout_seconds: 900
+              max_retries: 0
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/check_conectividad_oracle.py
                 base_parameters:
@@ -458,6 +519,12 @@ targets:
             # forma idempotente el plano de control. No usa Oracle → sin libraries.
             - task_key: crear_objetos
               job_cluster_key: midas_cluster
+              # Metadata: MERGE, CREATE IF NOT EXISTS y ALTER guardados. Idempotente,
+              # asi que reintentar es seguro y barato.
+              timeout_seconds: 1800
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/00_creacion_objetos_midas.py
                 base_parameters:
@@ -469,6 +536,13 @@ targets:
               depends_on:
                 - task_key: crear_objetos
               job_cluster_key: midas_cluster
+              # 3h: es la task larga (una query por instalacion/servicio/cuenta contra
+              # Oracle). UN solo reintento: repetir una extraccion de horas es caro y,
+              # si Oracle esta caido, el segundo intento tampoco va a funcionar.
+              timeout_seconds: 10800
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/10_extraer_datos_oracle.py
                 base_parameters:
@@ -485,6 +559,11 @@ targets:
               depends_on:
                 - task_key: extraer_datos_oracle
               job_cluster_key: midas_cluster
+              # Parquet -> Bronze con insertInto(overwrite=True): idempotente.
+              timeout_seconds: 3600
+              max_retries: 2
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_ingestion.py
                 parameters:
@@ -510,6 +589,12 @@ targets:
               depends_on:
                 - task_key: actualizar_ordenes_calidad
               job_cluster_key: midas_cluster
+              # DDL + INSERT OVERWRITE + vistas: idempotente. La verificacion previa
+              # aborta antes de tocar datos si falta un .sql.
+              timeout_seconds: 3600
+              max_retries: 1
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               spark_python_task:
                 python_file: ./src/midas/main_transform.py
                 parameters:
@@ -546,6 +631,12 @@ targets:
           tasks:
             - task_key: check
               job_cluster_key: midas_cluster
+              # Diagnostico de conectividad: CERO reintentos. Si falla, el fallo ES el
+              # resultado que se buscaba; reintentar solo oculta el sintoma.
+              timeout_seconds: 900
+              max_retries: 0
+              min_retry_interval_millis: 60000
+              retry_on_timeout: false
               notebook_task:
                 notebook_path: ./notebooks/check_conectividad_oracle.py
                 base_parameters:

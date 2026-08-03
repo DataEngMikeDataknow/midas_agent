@@ -66,8 +66,10 @@ Pipeline CD (Azure DevOps):
 
 ### `notebooks/00_creacion_objetos_midas.py`
 Task `crear_objetos`. DDL idempotente de `midas_control_cargas` / `midas_log_cargas`
-(con `job_name` en el CREATE), migracion guardada, bootstrap MERGE de 8 filas
-`FULL_CHAINED`, `query_padre_id` y verificacion que hace `raise` si no hay 8 activas.
+(con `job_name` en el CREATE) y de `midas_parametros`, migraciones guardadas de columnas
+(Bronze y Silver), DOS bootstrap MERGE independientes —12 filas `FULL_CHAINED` con
+`job_name='midas_bronze'` y 13 objetos con `job_name='midas_silver'`—, `query_padre_id`
+por `job_name` y verificacion que hace `raise` si el conteo activo no cuadra.
 
 ### `notebooks/10_extraer_datos_oracle.py`
 Task `extraer_datos_oracle`. Wrapper delgado: `%pip install JayDeBeApi JPype1` +

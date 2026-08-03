@@ -33,9 +33,33 @@ def ensure_data_dir():
     log.info(f"Directorio de salida asegurado: {output_path}")
 
 def save_to_parquet(df: pd.DataFrame, file_path: str):
+    """Escribe el Parquet. Lanza si no puede.
+
+    DOS cambios frente a la version anterior, los dos por la misma razon:
+
+    1. Un DataFrame VACIO pero CON COLUMNAS **si** se escribe. Antes se devolvia sin
+       escribir, y el archivo de la corrida anterior sobrevivia con el mismo nombre.
+       La ingesta lo leia despues como si fuera de hoy. Escribir el vacio deja el
+       estado sin ambiguedad: cero filas es cero filas, no "lo de ayer".
+    2. Un fallo de escritura **lanza** en vez de loguearse y seguir. Tragarlo dejaba
+       igualmente el archivo viejo en su sitio.
+
+    Un DataFrame sin columnas si es un error de programacion: significa que alguien
+    construyo un DataFrame vacio a mano en vez de dejar que el query fallara.
+    """
+    if df is None:
+        raise ValueError(f"save_to_parquet recibio None para {file_path}.")
+
+    if len(df.columns) == 0:
+        raise ValueError(
+            f"save_to_parquet recibio un DataFrame SIN COLUMNAS para {file_path}. "
+            f"Eso ya no deberia ocurrir: execute_query lanza ante un fallo en vez de "
+            f"devolver un DataFrame vacio."
+        )
+
     if df.empty:
-        log.warning(f"No hay datos para guardar en {file_path}. Archivo no creado.")
-        return
+        log.warning("Resultado VACIO para %s: se escribe igual (0 filas) para no dejar "
+                    "el archivo de la corrida anterior en su sitio.", file_path)
 
     try:
         df.to_parquet(
@@ -48,6 +72,7 @@ def save_to_parquet(df: pd.DataFrame, file_path: str):
         log.info(f"Datos guardados exitosamente en {file_path} ({len(df)} filas)")
     except Exception as e:
         log.error(f"Error al guardar archivo Parquet en {file_path}: {e}")
+        raise RuntimeError(f"No se pudo escribir el Parquet {file_path}: {e}") from e
 
 def run_query_ordenes_pendientes() -> pd.DataFrame:
     log.info("--- Iniciando proceso extracción: [ordenes_calidad_pendientes] ---")

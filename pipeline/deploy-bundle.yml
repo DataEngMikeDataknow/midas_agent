@@ -50,20 +50,71 @@ variables:
 
 stages:
   # ==========================================================================
+  # CALIDAD — corre SIEMPRE y bloquea los tres despliegues
+  # ==========================================================================
+  # Antes de esto el pipeline solo instalaba herramientas, validaba el bundle y
+  # desplegaba: los tests y el gate de PII no eran prerrequisito de nada.
+  #
+  # El gate de notebooks no es opcional. El 2026-08-03 se encontró un .ipynb
+  # commiteado con 768 KB de salidas que incluían nombres, identificaciones,
+  # direcciones y saldos de clientes reales. Un output de notebook es dato de
+  # producción pegado en el código, y nadie lo revisa en el diff porque es JSON
+  # ilegible.
+  - stage: Calidad
+    displayName: Calidad (tests + gate de PII)
+    dependsOn: []
+    jobs:
+      - job: Checks
+        displayName: Tests y gates
+        pool:
+          name: Interno-Ubuntu20.04-VMSS
+        steps:
+          - checkout: self
+            clean: true
+
+          - script: |
+              set -euo pipefail
+              python -m pip install --quiet --upgrade pip
+              python -m pip install --quiet -r requirements-test.txt
+            displayName: 'Instalar dependencias de test'
+
+          - script: |
+              set -euo pipefail
+              # `test_ensure_schema_exists` está EXCLUIDO a propósito: es un fallo
+              # preexistente, ajeno a este trabajo, y por acuerdo explícito no se
+              # toca. Se deselecciona aquí —a la vista, en el pipeline— en vez de
+              # dejar CI permanentemente rojo o, peor, sin gate de tests.
+              # Cuando alguien lo arregle, borrar el --deselect.
+              python -m pytest tests/ -q \
+                --deselect tests/test_ingestion.py::TestDataIngestion::test_ensure_schema_exists
+            displayName: 'Tests unitarios'
+
+          - script: |
+              set -euo pipefail
+              python scripts/check_notebook_outputs.py
+            displayName: 'Gate: notebooks sin outputs (PII)'
+
+  # ==========================================================================
   # DLLO ← rama desarrollo (o manual con environment=dllo)
   # ==========================================================================
   - stage: Deploy_DLLO
     displayName: Deploy bundle to DLLO
-    dependsOn: []
+    dependsOn: [Calidad]
+    # OJO: al declarar `condition` propia se PIERDE el succeeded() implícito de la
+    # dependencia. Sin el succeeded() explícito, el despliegue correría aunque
+    # Calidad hubiera fallado — que es justo lo contrario de tener un gate.
     condition: |
-      or(
-        and(
-          eq(variables['Build.SourceBranchName'], 'desarrollo'),
-          eq(variables['Build.Reason'], 'IndividualCI')
-        ),
-        and(
-          eq(variables['Build.Reason'], 'Manual'),
-          eq('${{ parameters.environment }}', 'dllo')
+      and(
+        succeeded(),
+        or(
+          and(
+            eq(variables['Build.SourceBranchName'], 'desarrollo'),
+            eq(variables['Build.Reason'], 'IndividualCI')
+          ),
+          and(
+            eq(variables['Build.Reason'], 'Manual'),
+            eq('${{ parameters.environment }}', 'dllo')
+          )
         )
       )
     jobs:
@@ -129,16 +180,20 @@ stages:
   # ==========================================================================
   - stage: Deploy_UAT
     displayName: Deploy bundle to UAT
-    dependsOn: []
+    dependsOn: [Calidad]
+    # succeeded() explícito: ver la nota en Deploy_DLLO.
     condition: |
-      or(
-        and(
-          eq(variables['Build.SourceBranchName'], 'pruebas'),
-          eq(variables['Build.Reason'], 'IndividualCI')
-        ),
-        and(
-          eq(variables['Build.Reason'], 'Manual'),
-          eq('${{ parameters.environment }}', 'uat')
+      and(
+        succeeded(),
+        or(
+          and(
+            eq(variables['Build.SourceBranchName'], 'pruebas'),
+            eq(variables['Build.Reason'], 'IndividualCI')
+          ),
+          and(
+            eq(variables['Build.Reason'], 'Manual'),
+            eq('${{ parameters.environment }}', 'uat')
+          )
         )
       )
     jobs:
@@ -204,16 +259,20 @@ stages:
   # ==========================================================================
   - stage: Deploy_PDN
     displayName: Deploy bundle to PDN
-    dependsOn: []
+    dependsOn: [Calidad]
+    # succeeded() explícito: ver la nota en Deploy_DLLO.
     condition: |
-      or(
-        and(
-          eq(variables['Build.SourceBranchName'], 'produccion'),
-          eq(variables['Build.Reason'], 'IndividualCI')
-        ),
-        and(
-          eq(variables['Build.Reason'], 'Manual'),
-          eq('${{ parameters.environment }}', 'pdn')
+      and(
+        succeeded(),
+        or(
+          and(
+            eq(variables['Build.SourceBranchName'], 'produccion'),
+            eq(variables['Build.Reason'], 'IndividualCI')
+          ),
+          and(
+            eq(variables['Build.Reason'], 'Manual'),
+            eq('${{ parameters.environment }}', 'pdn')
+          )
         )
       )
     jobs:

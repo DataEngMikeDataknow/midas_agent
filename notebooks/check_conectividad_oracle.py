@@ -49,7 +49,12 @@ except Exception as e:
 
 # COMMAND ----------
 # Instala el driver Oracle JDBC (solo para el Paso 3)
-%pip install JayDeBeApi JPype1
+#
+# `# MAGIC %pip`, no `%pip` a secas: en el formato source de Databricks los magics van
+# comentados con el prefijo MAGIC. Un `%pip` crudo es SyntaxError de Python y rompe el
+# notebook COMPLETO — es decir, el diagnóstico de conectividad no arrancaba justo
+# cuando hacía falta. Mismo patrón que 10_extraer_datos_oracle.py.
+# MAGIC %pip install JayDeBeApi JPype1
 dbutils.library.restartPython()
 
 # COMMAND ----------

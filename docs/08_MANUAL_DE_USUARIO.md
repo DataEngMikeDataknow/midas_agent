@@ -20,8 +20,10 @@ programado.
 
 ## 3. Que entrega el sistema
 Tablas de datos en Databricks (schema `facturacion`):
-- 8 tablas **Bronze** (`*_bronze`)
-- 4 tablas **Silver** (`*_silver`), entre ellas el historial de facturacion y de critica
+- 12 tablas **Bronze** (`*_bronze`)
+- 13 objetos **Silver** (`*_silver`): 8 tablas y 5 vistas. Incluyen el historial de
+  facturacion y de critica del Caso 1, y el historial de consumo, los cargos y las
+  features del Caso 2
 
 No entrega decisiones, ni CSV, ni predicciones: eso es del bundle del agente.
 

@@ -60,7 +60,7 @@ sequenceDiagram
 
     Job->>CO: DDL + bootstrap control (idempotente)
     Job->>EX: inicia extraccion
-    loop 8 tablas en orden (FULL_CHAINED)
+    loop 12 tablas en orden (FULL_CHAINED)
         EX->>Ctrl: log_inicio (INICIADO)
         EX->>Ora: query (binds :param -> ?)
         Ora-->>EX: filas (objetos Java -> tipos Python)
@@ -86,7 +86,8 @@ flowchart LR
 
 ### 0. Creacion de objetos
 - `notebooks/00_creacion_objetos_midas.py` (task `crear_objetos`)
-- Idempotente: DDL `IF NOT EXISTS` de control/log + bootstrap de las 8 filas + verificacion
+- Idempotente: DDL `IF NOT EXISTS` de control/log/parametros + bootstrap de los DOS
+  `job_name` (12 cargas Bronze + 13 objetos Silver) + migraciones guardadas + verificacion
 - Es la primera task; sin ella el resto no tiene metadata para operar
 
 ### 1. Extraccion
@@ -96,7 +97,7 @@ flowchart LR
 
 ### 2. Ingestion
 - `src/midas/main_ingestion.py` + `ingestion.py`
-- Carga Parquet a las 8 tablas Bronze con `insertInto(overwrite=True)`
+- Carga Parquet a las 12 tablas Bronze con `insertInto(overwrite=True)`
 
 ### 3. Transformacion
 - `src/midas/main_transform.py` + `transformations.py`

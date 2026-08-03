@@ -7,10 +7,13 @@ Runbook operativo para ejecutar, monitorear, mantener y diagnosticar `midas_data
 
 ### Flujo esperado
 1. `midas_bronze_silver_<target>` corre a las 07:00 America/Bogota.
-2. `crear_objetos` asegura control/log y las 8 filas activas.
-3. `extraer_datos_oracle` genera los 8 Parquet en el Volume (JDBC).
-4. `actualizar_ordenes_calidad` carga las 8 tablas Bronze (`insertInto`).
-5. `bronze_to_silver` construye las 4 tablas Silver.
+2. `crear_objetos` asegura control/log/parametros, siembra los DOS `job_name`
+   (`midas_bronze` con 12 cargas y `midas_silver` con 13 objetos) y corre las
+   migraciones guardadas de columnas.
+3. `extraer_datos_oracle` genera los 12 Parquet en el Volume (JDBC).
+4. `actualizar_ordenes_calidad` carga las 12 tablas Bronze (`insertInto`).
+5. `bronze_to_silver` construye los 13 objetos Silver (8 tablas + 5 vistas) en orden
+   topologico sobre `query_padre_id`.
 6. La corrida queda registrada en `midas_log_cargas`.
 
 La inferencia del bundle `midas_agent` corre despues (contrato temporal).
@@ -62,8 +65,11 @@ Estados: `INICIADO`, `EXITOSO`, `FALLIDO`.
 
 ### Indicadores minimos
 - duracion del job y de la extraccion
-- 8 filas `EXITOSO` para `job_name = 'midas_bronze'` del dia
-- existencia de las 8 Bronze y 4 Silver
+- 12 filas `EXITOSO` para `job_name = 'midas_bronze'` del dia
+- 13 filas `EXITOSO` para `job_name = 'midas_silver'` del dia
+- existencia de las 12 Bronze y los 13 objetos Silver
+- el conteo de verdad NO se cablea aqui: sale de `SEED` / `SEED_SILVER` en
+  `notebooks/00_creacion_objetos_midas.py`, que es la fuente unica
 - errores de red/credenciales/permisos en el log
 
 ## Notificaciones configuradas
@@ -84,7 +90,9 @@ Cubre solo jobs Databricks; no sustituye monitoreo corporativo.
 | `PERMISSION_DENIED create clusters` | SP sin permiso de computo (dllo) | usar `existing_cluster_id`; validar cluster compartido |
 | `error downloading Terraform` | agent pool sin acceso a releases.hashicorp.com | validar step Install Terraform / `DATABRICKS_TF_EXEC_PATH` |
 | `ORACLE_JDBC_JAR_PATH ... no existe` | jar no subido o ruta distinta | subir jar; la ruta debe coincidir caracter por caracter |
-| crear_objetos falla con "8 filas" | control desactivado/incompleto | revisar `midas_control_cargas` (activa/job_name) |
+| crear_objetos falla con "N filas activas" | control desactivado/incompleto | revisar `midas_control_cargas` (`activa` / `job_name`); el N esperado sale de `SEED`/`SEED_SILVER` |
+| Silver: `Falta .../view/<obj>.sql` | el `tipo_carga` cambio en el codigo y el control quedo con el valor viejo | re-ejecutar `crear_objetos`; pasa si se repara SOLO `bronze_to_silver` |
+| Silver: columna nueva sin comentario | `ALTER ADD COLUMNS` la agrego muda y el DDL es no-op sobre tabla existente | re-ejecutar `crear_objetos`: `_MIGRACION_SILVER` aplica `ALTER COLUMN ... COMMENT` |
 
 ## Mantenimiento preventivo
 

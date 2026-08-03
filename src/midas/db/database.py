@@ -81,13 +81,24 @@ def init_database():
     _diagnostico_red()
     try:
         import jaydebeapi
-        _conn = jaydebeapi.connect(
-            ORACLE_DRIVER,
-            _jdbc_url(),
-            [os.environ["DB_USER"], os.environ["DB_PASSWORD"]],
-            jar_path,
-        )
-        log.info("Conexión JDBC establecida: %s", _jdbc_url())
+        # Se pasan PROPIEDADES (dict) en vez de [user, password]: es la unica forma de
+        # inyectar los timeouts del driver Oracle. Sin ellos una llamada colgada retiene
+        # el driver indefinidamente y la task solo muere cuando el job entero expira.
+        #
+        # CONNECT_TIMEOUT cubre el handshake TCP+autenticacion; ReadTimeout cubre la
+        # espera de datos de un query ya enviado, que es el caso que de verdad cuelga.
+        # Ambos en milisegundos y parametrizables por si una extraccion legitima tarda.
+        propiedades = {
+            "user": os.environ["DB_USER"],
+            "password": os.environ["DB_PASSWORD"],
+            "oracle.net.CONNECT_TIMEOUT": os.environ.get("ORACLE_CONNECT_TIMEOUT_MS", "30000"),
+            "oracle.jdbc.ReadTimeout": os.environ.get("ORACLE_READ_TIMEOUT_MS", "1800000"),
+        }
+        _conn = jaydebeapi.connect(ORACLE_DRIVER, _jdbc_url(), propiedades, jar_path)
+        log.info("Conexión JDBC establecida: %s (connect_timeout=%sms, read_timeout=%sms)",
+                 _jdbc_url(),
+                 propiedades["oracle.net.CONNECT_TIMEOUT"],
+                 propiedades["oracle.jdbc.ReadTimeout"])
     except Exception as e:
         log.error("Error al conectar vía JDBC: %s", e)
         sys.exit(1)
@@ -183,8 +194,9 @@ def execute_query(query: str, params: dict = None) -> pd.DataFrame:
     """Ejecuta un query (binds nombrados estilo Oracle) y retorna un DataFrame."""
     global _conn
     if _conn is None:
-        log.error("La conexión no está inicializada. Llama a init_database() primero.")
-        return pd.DataFrame()
+        raise RuntimeError(
+            "La conexión no está inicializada. Llama a init_database() primero."
+        )
 
     prepared, values = _prepare(query, params or {})
     cursor = None
@@ -203,10 +215,23 @@ def execute_query(query: str, params: dict = None) -> pd.DataFrame:
         log.debug("Query retornó %d filas.", len(df))
         return df
     except Exception as e:
+        # SE LANZA, no se devuelve un DataFrame vacío.
+        #
+        # Devolver vacío hacía que un fallo de Oracle fuera INDISTINGUIBLE de un
+        # resultado legítimamente vacío: `save_to_parquet` no escribía, el Parquet del
+        # día anterior sobrevivía, `chain_runner` registraba EXITOSO con 0 filas y la
+        # ingesta publicaba los datos de ayer como si fueran de hoy. Un job verde con
+        # datos viejos es el peor fallo posible: silencioso y con apariencia de éxito.
+        #
+        # Este bug ya se manifestó: los 782 "huérfanos" de servicios_contrato que se
+        # diagnosticaron en la v3 como "residuo de corridas anteriores" eran esto.
+        #
+        # NO se loguean los VALORES de los binds: son identificadores de cliente
+        # (servicio suscrito, contrato, instalación) y el log tiene otra audiencia.
         log.error("Error al ejecutar query: %s", e)
         log.error("Query (primeros 200 chars): %s...", prepared[:200])
-        log.error("Parámetros: %s", values)
-        return pd.DataFrame()
+        log.error("Binds: %d parámetro(s)", len(values) if values else 0)
+        raise RuntimeError(f"Falló la ejecución del query en Oracle: {e}") from e
     finally:
         if cursor is not None:
             try:

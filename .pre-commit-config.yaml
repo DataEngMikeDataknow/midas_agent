@@ -1,0 +1,36 @@
+# =============================================================================
+# Hooks de pre-commit — midas_data_platform
+# =============================================================================
+# Instalación (una vez por clon):
+#     pip install pre-commit
+#     pre-commit install
+#
+# El hook de notebooks es el que importa: existe porque el 2026-08-03 se encontró
+# un .ipynb commiteado con 768 KB de salidas que incluían nombres, identificaciones,
+# direcciones y saldos de clientes reales. Git conserva eso aunque después se limpie,
+# así que la única defensa que sirve es no dejarlo entrar.
+#
+# El mismo script corre en el pipeline (stage `Calidad`): el hook es comodidad, el
+# gate de CI es la garantía. Un hook se puede saltar con `--no-verify`; el pipeline no.
+# =============================================================================
+repos:
+  - repo: local
+    hooks:
+      - id: notebooks-sin-outputs
+        name: notebooks sin outputs ejecutados (PII)
+        entry: python scripts/check_notebook_outputs.py
+        language: system
+        files: \.ipynb$
+        pass_filenames: true
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        # 500 KB: un .py o .sql nunca llega ahí. Un notebook con salidas, sí.
+        args: ["--maxkb=500"]
+      - id: end-of-file-fixer
+        exclude: \.ipynb$
+      - id: trailing-whitespace
+        exclude: \.ipynb$

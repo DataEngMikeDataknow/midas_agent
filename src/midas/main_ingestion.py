@@ -12,6 +12,7 @@ if _src_path not in sys.path:
 
 import logging
 import argparse
+import time
 from datetime import datetime
 from pyspark.sql import SparkSession
 from midas.ingestion import DataIngestor
@@ -37,6 +38,49 @@ _QUERY_KEY = {
     # ─── v3 R4: Perdidas No Operacionales ───
     "midas_datos_perdidas_no_operacionales_bronze": "QUERY_PERDIDAS_NO_OPERACIONALES",
 }
+
+
+def antiguedad_horas(parquet_path: str):
+    """Horas transcurridas desde que se escribio el Parquet. None si no se puede leer.
+
+    El path viene como `dbfs:/Volumes/...`; los Volumes de UC estan montados por FUSE,
+    asi que la ruta POSIX equivalente responde a os.path.getmtime.
+    """
+    posix = parquet_path[len("dbfs:"):] if parquet_path.startswith("dbfs:") else parquet_path
+    try:
+        # time.time() y NO datetime.utcnow().timestamp(): utcnow() devuelve un datetime
+        # naive que .timestamp() reinterpreta como hora LOCAL, asi que en UTC-5 el
+        # calculo saldria 5 horas corrido. getmtime ya entrega timestamp POSIX.
+        return (time.time() - os.path.getmtime(posix)) / 3600.0
+    except OSError:
+        return None
+
+
+def verificar_frescura(tables_config: list, max_horas: float) -> list:
+    """Devuelve los (tabla, motivo) cuyo Parquet NO es de esta corrida.
+
+    ES LA GUARDA QUE CIERRA F02. Los Parquet tienen nombre FIJO, asi que si la
+    extraccion no escribio —porque Oracle fallo, porque el resultado vino vacio, o
+    porque el proceso murio a mitad— el archivo del dia anterior sigue ahi y la
+    ingesta lo cargaria como si fuera de hoy, con el job en verde.
+
+    Se comprueba aqui, en un solo punto, en vez de en los 12 extractores: cualquier
+    ruta que deje un archivo viejo queda atrapada, incluidas las que no anticipamos.
+    """
+    if max_horas <= 0:
+        log.warning("Guarda de frescura DESACTIVADA (--max_antiguedad_horas=0).")
+        return []
+
+    rancios = []
+    for config in tables_config:
+        edad = antiguedad_horas(config["path"])
+        if edad is None:
+            rancios.append((config["name"], "el Parquet no existe o no se puede leer"))
+        elif edad > max_horas:
+            rancios.append((config["name"],
+                            f"el Parquet tiene {edad:.1f}h de antiguedad "
+                            f"(maximo {max_horas:.1f}h): es de una corrida anterior"))
+    return rancios
 
 
 def build_tables_config(source_volume_path: str) -> list:
@@ -191,6 +235,10 @@ def main():
                         help="Discriminador del plano de control compartido (midas_control_cargas)")
     parser.add_argument("--run_id", default=None,
                         help="UUID de la corrida. Idealmente el mismo de la extraccion.")
+    parser.add_argument("--max_antiguedad_horas", type=float, default=12.0,
+                        help="Rechaza un Parquet mas viejo que esto. 0 desactiva la "
+                             "guarda. Default 12h: cubre una extraccion larga y un "
+                             "repair el mismo dia, pero atrapa el archivo de ayer.")
 
     args = parser.parse_args()
 
@@ -215,6 +263,21 @@ def main():
     source_volume_path = f"dbfs:/Volumes/{args.source_catalog}/{args.source_schema}/{args.source_volume}/{args.source_base_path}"
 
     tables_config = build_tables_config(source_volume_path)
+
+    # Guarda de frescura ANTES de tocar Bronze. Publicar los datos de ayer es peor que
+    # no publicar nada: el consumidor no tiene forma de notarlo.
+    rancios = verificar_frescura(tables_config, args.max_antiguedad_horas)
+    if rancios:
+        for tabla, motivo in rancios:
+            log.error("[%s] Parquet RANCIO: %s", tabla, motivo)
+        raise RuntimeError(
+            f"Ingesta abortada: {len(rancios)} Parquet RANCIO(S). No se cargo nada.\n  - "
+            + "\n  - ".join(f"{t}: {m}" for t, m in rancios)
+            + "\nRevisa si la extraccion de Oracle fallo: un Parquet viejo con el nombre "
+              "de hoy significa que el paso anterior no escribio. Para forzar una "
+              "recarga manual con archivos antiguos: --max_antiguedad_horas 0."
+        )
+    log.info("Frescura OK: los %d Parquet son de esta corrida.", len(tables_config))
 
     # En primera ejecución crea el schema; en cargas diarias es no-op.
     ingestor.ensure_schema_exists(args.destination_catalog, args.destination_schema)

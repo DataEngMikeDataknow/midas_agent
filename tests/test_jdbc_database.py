@@ -6,7 +6,8 @@ Se prueban las piezas puras de src/midas/db/database.py:
 - _sanitize_param: coerción de tipos numpy/pandas a nativos de Python.
 - _to_python: conversión de objetos Java (JPype) a tipos Python (paridad de
   schema Parquet con la versión python-oracledb).
-- execute_query: sin init_database() devuelve un DataFrame vacío.
+- execute_query: sin init_database() LANZA (antes devolvía un DataFrame vacío, que era
+  el bug F02: un fallo de Oracle quedaba indistinguible de un resultado vacío).
 """
 import unittest
 from datetime import datetime
@@ -121,12 +122,70 @@ class TestToPython(unittest.TestCase):
         self.assertEqual(database._to_python("hola", None), "hola")
 
 
-class TestExecuteQuerySinInit(unittest.TestCase):
-    def test_devuelve_df_vacio(self):
-        database._conn = None  # aseguramos que no hay conexión
-        df = database.execute_query("SELECT 1 FROM dual")
-        self.assertIsInstance(df, pd.DataFrame)
-        self.assertTrue(df.empty)
+class TestExecuteQueryFalla(unittest.TestCase):
+    """El test anterior (`test_devuelve_df_vacio`) EXIGÍA el comportamiento peligroso.
+
+    Devolver un DataFrame vacío ante un fallo hacía que un error de Oracle fuera
+    indistinguible de un resultado legítimamente vacío: el Parquet no se reescribía, el
+    del día anterior sobrevivía, el chain_runner registraba EXITOSO y la ingesta
+    publicaba los datos de ayer. Un job verde con datos viejos.
+    """
+
+    def tearDown(self):
+        database._conn = None
+
+    def test_lanza_sin_conexion(self):
+        database._conn = None
+        with self.assertRaises(RuntimeError) as ctx:
+            database.execute_query("SELECT 1 FROM dual")
+        self.assertIn("init_database", str(ctx.exception))
+
+    def test_lanza_si_el_query_falla(self):
+        """El fallo de Oracle debe PROPAGARSE, no convertirse en 0 filas."""
+        class _CursorRoto:
+            description = None
+
+            def execute(self, *a, **k):
+                raise Exception("ORA-00942: table or view does not exist")
+
+            def close(self):
+                pass
+
+        class _ConnRota:
+            def cursor(self):
+                return _CursorRoto()
+
+        database._conn = _ConnRota()
+        with self.assertRaises(RuntimeError) as ctx:
+            database.execute_query("SELECT * FROM tabla_inexistente")
+        # El mensaje original de Oracle no se pierde: es lo que permite diagnosticar.
+        self.assertIn("ORA-00942", str(ctx.exception))
+
+    def test_no_loguea_los_valores_de_los_binds(self):
+        """Los binds son identificadores de cliente; el log tiene otra audiencia."""
+        import logging
+
+        class _CursorRoto:
+            description = None
+
+            def execute(self, *a, **k):
+                raise Exception("boom")
+
+            def close(self):
+                pass
+
+        class _ConnRota:
+            def cursor(self):
+                return _CursorRoto()
+
+        database._conn = _ConnRota()
+        with self.assertLogs(database.log, level="ERROR") as capturado:
+            with self.assertRaises(RuntimeError):
+                database.execute_query("SELECT 1 FROM dual WHERE x = :p_servicio_suscrito",
+                                       {"p_servicio_suscrito": 104455649})
+        texto = "\n".join(capturado.output)
+        self.assertNotIn("104455649", texto, "el valor del bind no debe ir al log")
+        self.assertIn("1 parámetro", texto)
 
 
 if __name__ == "__main__":

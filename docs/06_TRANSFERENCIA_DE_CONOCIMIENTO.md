@@ -23,8 +23,8 @@ mindmap
     Datos
       Oracle (JDBC ojdbc11)
       Parquet (Volume UC)
-      Bronze (8 tablas)
-      Silver (4 tablas)
+      Bronze (12 tablas)
+      Silver (8 tablas + 5 vistas)
     Control
       midas_control_cargas
       midas_log_cargas

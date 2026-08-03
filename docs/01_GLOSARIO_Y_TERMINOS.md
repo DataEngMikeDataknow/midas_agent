@@ -19,7 +19,7 @@ Orden operativa asociada a validaciones, correcciones o revisiones previas sobre
 consumos, lecturas o causales.
 
 ### Cadena (FULL_CHAINED)
-Modelo de carga de este bundle: las 8 extracciones se ejecutan en orden porque cada
+Modelo de carga de este bundle: las 12 extracciones se ejecutan en orden porque cada
 paso puede alimentar al siguiente (p. ej. de ordenes pendientes se derivan los
 servicios suscritos que parametrizan lecturas/consumos).
 

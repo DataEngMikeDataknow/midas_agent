@@ -77,7 +77,8 @@ posee en exclusiva; nunca hacer `bundle destroy` asumiendo que las limpia.
 - [ ] secret scope/password de pdn validados (`AZ-SecretScopeDBKS-EPM-PROD-KV`)
 - [ ] `midas_check_conectividad -t pdn` en verde
 - [ ] `bundle validate -t pdn` sin errores
-- [ ] verificar 8 filas activas de control tras `crear_objetos`
+- [ ] verificar las filas activas de control tras `crear_objetos` (12 `midas_bronze` +
+      13 `midas_silver`; el conteo lo verifica el propio notebook)
 
 ## H. Historial resumido de decisiones tecnicas
 - separacion del bundle de datos respecto al del agente (`midas_agent`)
