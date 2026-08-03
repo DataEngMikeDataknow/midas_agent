@@ -457,6 +457,18 @@ CON_SENAL = [
     # R5, encendidas el 2026-08-03. Si vuelven a salir 100% NULL es que alguien
     # desactivó los parámetros, no que la regla no aplique.
     "solicitud_reconexion_intersecta_periodo", "solicitud_suspension_intersecta_periodo",
+    # Estas DOS son la prueba real de que el join de solicitudes encuentra algo: una
+    # fecha solo aparece si hubo una reconexión que efectivamente cruzó con el periodo.
+    "fecha_ultima_reconexion", "dias_desde_reconexion",
+]
+
+# Booleanas que dependen de un parámetro ya confirmado. Contar no-nulos NO basta:
+# una vez activo el parámetro valen true/false en TODAS las filas, así que el conteo
+# de no-nulos da 100% aunque el join esté roto y no encuentre nada. Lo que hay que
+# medir es cuántas dan true.
+BOOL_CON_POSITIVOS = [
+    ("solicitud_reconexion_intersecta_periodo", "tipo_solicitud_reconexion"),
+    ("solicitud_suspension_intersecta_periodo", "tipo_solicitud_suspension"),
 ]
 
 if not existe(OBJ):
@@ -482,6 +494,24 @@ else:
         chequeo("S7", f"{col} tiene señal",
                 "OK" if n_no_null > 0 else "REVISAR", "> 0 no-nulos", f"{n_no_null:,}",
                 nota="" if n_no_null else "todo NULL: la regla no está midiendo nada")
+
+    # Una booleana con parámetro activo que nunca da true es indistinguible de un join
+    # roto. Es REVISAR y no FALLA porque puede ser legítimo —quizá ninguna solicitud
+    # cayó dentro de una ventana de consumo— pero hay que mirarlo, no asumirlo.
+    for col, param in BOOL_CON_POSITIVOS:
+        if col not in df.columns:
+            continue
+        n_true = df.filter(F.col(col)).count()
+        n_null = df.filter(F.col(col).isNull()).count()
+        if n_null == n_tot:
+            chequeo("S7", f"{col} apagada", "OK", obtenido="100% NULL",
+                    nota=f"'{param}' está inactivo: la columna se apaga, no miente")
+        else:
+            chequeo("S7", f"{col} tiene algún true",
+                    "OK" if n_true > 0 else "REVISAR", "> 0 true", f"{n_true:,} de {n_tot:,}",
+                    nota="" if n_true else
+                         "parámetro activo pero cero positivos: revisa el join de solicitudes "
+                         "antes de creer que no hubo ninguna")
 
     # R6: el promedio nunca debe usar más periodos que la ventana parametrizada.
     if "n_periodos_usados_en_promedio" in df.columns:

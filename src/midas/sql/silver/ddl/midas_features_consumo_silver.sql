@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_features_consumo_silver (
     -- ── Regla 2 · Caso 17 · otros cobros ──
     valor_cargos_periodo             DOUBLE COMMENT 'R2. Suma de cargos del periodo, con signo aplicado.',
     valor_cargos_programa_anormal    DOUBLE COMMENT 'R2. Suma de cargos cuyo programa NO es el de facturacion normal: mantenimiento, control de perdidas, Fenix. Es el nucleo del Caso 17.',
-    unidades_consumo_cobradas        DOUBLE COMMENT 'R2. Unidades del cargo de consumo normal. Negocio pidio tomar las unidades de CARGOS, no de conssesu.',
+    unidades_consumo_cobradas        DOUBLE COMMENT 'R2. Unidades (kWh o m3) de los conceptos de consumo MEDIDO: 87 sin IVA, 90 activa, 546 activa punta, 550 agua potable, 552 residual. Negocio pidio tomar las unidades de CARGOS, no de conssesu. EXCLUYE los derivados (contribuciones, subsidios, cuotas) porque sus unidades no son consumo, y excluye el 899 sin legalizar, que va aparte.',
+    unidades_consumo_sin_legalizar   DOUBLE COMMENT 'R2. Unidades del concepto 899 CONSUMO ENERGIA SIN LEGALIZAR. Va SEPARADO de unidades_consumo_cobradas a proposito: es consumo irregular (tipicamente recuperacion) y sumarlo a la linea base taparia el Caso 17 en vez de revelarlo. Si esta poblado junto con un salto en delta_valor_pct, esa es la explicacion del salto.',
     delta_valor_pct                  DOUBLE COMMENT 'R2. Variacion del valor contra el periodo anterior. OJO: la cuenta de cobro es por (SS, periodo), NO por tipo de consumo, asi que este valor SE REPITE en activa y reactiva. PENDIENTE-NEG: si debe repartirse por tipo.',
     delta_unidades_consumo_pct       DOUBLE COMMENT 'R2. Variacion de las unidades cobradas. Si el valor sube y las unidades no, el sobrecosto no es de consumo.',
 

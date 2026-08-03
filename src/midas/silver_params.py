@@ -38,6 +38,9 @@ _PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 SIN_PARAMETRIZAR = "__SIN_PARAMETRIZAR__"
 
 _TIPOS_ENTEROS = {"INT", "INTEGER", "BIGINT", "LONG", "SMALLINT"}
+# Listas de enteros para clausulas IN (...). Se resuelven SIN parentesis: los pone el
+# SQL, para que el archivo se lea `IN ({p_clave})` y no `IN {p_clave}`.
+_TIPOS_LISTA_ENTEROS = {"INT_LIST", "INT_ARRAY", "LISTA_INT"}
 _TIPOS_DECIMALES = {"DOUBLE", "FLOAT", "DECIMAL", "NUMERIC"}
 _TIPOS_BOOLEANOS = {"BOOLEAN", "BOOL"}
 
@@ -73,6 +76,24 @@ def _literal_sql(valor: str, tipo_dato: str, clave: str) -> str:
             raise ValueError(
                 f"midas_parametros: la clave '{clave}' declara tipo_dato={tipo_dato} "
                 f"pero su valor {texto!r} no es un entero."
+            )
+    if tipo in _TIPOS_LISTA_ENTEROS:
+        # Para clausulas IN (...). Cada elemento pasa por int(), asi que la lista
+        # conserva exactamente la misma garantia que un entero suelto: nada que no
+        # sea un numero llega a concatenarse en la sentencia.
+        piezas = [p.strip() for p in texto.split(",") if p.strip()]
+        if not piezas:
+            raise ValueError(
+                f"midas_parametros: la clave '{clave}' declara tipo_dato={tipo_dato} "
+                f"pero su valor {texto!r} no tiene ningun elemento. Una lista vacia "
+                f"produciria 'IN ()', que es un error de sintaxis."
+            )
+        try:
+            return ", ".join(str(int(p)) for p in piezas)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"midas_parametros: la clave '{clave}' declara tipo_dato={tipo_dato} "
+                f"pero su valor {texto!r} no es una lista de enteros separados por coma."
             )
     if tipo in _TIPOS_DECIMALES:
         try:

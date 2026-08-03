@@ -178,6 +178,20 @@ class TestParametros(unittest.TestCase):
         with self.assertRaises(ValueError):
             _literal_sql("1 OR 1=1", "INT", "clave")
 
+    def test_lista_de_enteros_para_clausulas_in(self):
+        """INT_LIST existe porque `IN (...)` no admite subconsulta ni parámetro ligado.
+
+        Cada elemento pasa por int(), así que la lista conserva exactamente la misma
+        garantía que un entero suelto: es concatenación literal en una sentencia SQL,
+        y esta validación es lo único que separa un parámetro editable a mano de una
+        inyección."""
+        self.assertEqual(_literal_sql("87,90,546", "INT_LIST", "k"), "87, 90, 546")
+        self.assertEqual(_literal_sql(" 87 , 90 ", "INT_LIST", "k"), "87, 90")
+        for veneno in ("87,DROP TABLE x", "87;90", "87 OR 1=1", "87,90x", ""):
+            with self.subTest(valor=veneno):
+                with self.assertRaises(ValueError):
+                    _literal_sql(veneno, "INT_LIST", "conceptos_consumo_medido")
+
     def test_escapa_las_cadenas(self):
         self.assertEqual(_literal_sql("PR", "STRING", "t"), "'PR'")
         self.assertEqual(_literal_sql("O'Brien", "STRING", "t"), "'O''Brien'")
@@ -318,6 +332,23 @@ class TestSeedContraArchivos(unittest.TestCase):
         for tabla, _, tipo in _seed_silver():
             with self.subTest(tabla=tabla):
                 self.assertIn(tipo, _FASE_CARGA)
+
+    def test_columnas_nuevas_del_ddl_tienen_migracion(self):
+        """El DDL de Silver es CREATE TABLE IF NOT EXISTS: contra una tabla que ya
+        existe NO agrega columnas. Y la carga usa BY NAME, que falla si el SELECT trae
+        una columna que la tabla no tiene. Toda columna que se agregue a un DDL después
+        del primer despliegue necesita su ALTER en _MIGRACION_SILVER, o la carga se
+        rompe en el ambiente donde la tabla ya existía."""
+        texto = (Path(__file__).resolve().parents[1]
+                 / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+        self.assertIn("_MIGRACION_SILVER", texto,
+                      "no existe el bloque de migración de Silver")
+        bloque = texto[texto.index("_MIGRACION_SILVER = {"):]
+        bloque = bloque[:bloque.index("\n}")]
+        # La única columna agregada después del primer despliegue a la fecha.
+        self.assertIn("unidades_consumo_sin_legalizar", bloque)
+        ddl = (SQL_DIR / "ddl" / "midas_features_consumo_silver.sql").read_text(encoding="utf-8")
+        self.assertIn("unidades_consumo_sin_legalizar", ddl)
 
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""

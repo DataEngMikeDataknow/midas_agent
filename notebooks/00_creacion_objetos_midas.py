@@ -177,6 +177,37 @@ for tabla, columnas in _MIGRACION_V3.items():
     print(f"OK  {tabla}: +{[c for c, _ in faltantes]}")
 
 # COMMAND ----------
+# ───── Migración guardada de las tablas SILVER ─────
+# El DDL de Silver es `CREATE TABLE IF NOT EXISTS`: contra una tabla que YA existe no
+# hace nada, así que una columna nueva jamás aparecería. Y la carga usa
+# `INSERT OVERWRITE ... BY NAME`, que FALLA si el SELECT trae una columna que la tabla
+# no tiene. Sin este bloque, agregar una feature rompe la carga en vez de agregarla.
+#
+# Mismo patrón guardado que Bronze: solo se altera lo que falta, así que es idempotente.
+_MIGRACION_SILVER = {
+    # 2026-08-03: unidades_consumo_cobradas pasó a filtrar por CONCEPTO en vez de por
+    # causal (-1 era el 99% de las líneas y no aislaba el consumo). El consumo sin
+    # legalizar se publica aparte para no contaminar la línea base de R2.
+    "midas_features_consumo_silver": [
+        ("unidades_consumo_sin_legalizar", "DOUBLE"),
+    ],
+}
+
+for tabla, columnas in _MIGRACION_SILVER.items():
+    full = f"{CATALOG}.{SCHEMA}.{tabla}"
+    if not spark.catalog.tableExists(full):
+        print(f"--  {tabla}: no existe todavía, la creará el DDL de Silver (sin ALTER)")
+        continue
+    existentes = [f.name for f in spark.table(full).schema.fields]
+    faltantes = [(c, t) for (c, t) in columnas if c not in existentes]
+    if not faltantes:
+        print(f"OK  {tabla}: columnas nuevas ya presentes")
+        continue
+    cols_sql = ", ".join(f"{c} {t}" for c, t in faltantes)
+    spark.sql(f"ALTER TABLE {full} ADD COLUMNS ({cols_sql})")
+    print(f"OK  {tabla}: +{[c for c, _ in faltantes]}")
+
+# COMMAND ----------
 # ───── Bootstrap del control (Caso 1 + Caso 2) ─────
 # Un solo seed metadata-driven. tipo_carga:
 #   QUERY_FULL_OVERWRITE = dimensiones de catálogo (se recargan completas a diario).
@@ -468,7 +499,9 @@ _PARAMS = [
     ("ventana",    "ventana_promedio_max_periodos", "6",    "INT", "tope de periodos hacia atras al buscar los 5 con lectura correcta", True),
 
     # ── Cargos ──
-    ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "OJO: NO aisla el consumo. Datos 2026-08-03: la causal -1 es el 99% de las lineas (21.596 de 21.844); solo excluye las causales especiales (74 PNO, 73 abono a diferido, 55 descarga terceros). Lo que distingue el consumo es el CONCEPTO, no la causal. Ver PENDIENTE-NEG en contrato_silver.md", True),
+    ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "Causal 'sin novedad'. NO aisla el consumo: datos 2026-08-03 muestran que -1 es el 99% de las lineas (21.596 de 21.844); solo excluye las causales especiales (74 PNO, 73 abono a diferido, 55 descarga terceros). Se conserva porque sigue siendo util para excluir esas causales, pero las UNIDADES de consumo salen de conceptos_consumo_medido", True),
+    ("cargo",      "conceptos_consumo_medido",     "87,90,546,550,552", "INT_LIST", "Conceptos que representan consumo MEDIDO del servicio (kWh o m3 realmente consumidos). Confirmados con datos 2026-08-03 sobre los 15 conceptos que contienen 'CONSUMO': 87 SIN IVA, 90 ACTIVA, 546 ACTIVA PUNTA, 550 AGUA POTABLE, 552 RESIDUAL. Se EXCLUYEN los derivados (contribuciones 9503/9512/9513/9637/9638, subsidio 9504, cuotas de financiacion 3087/3090/3845) porque sus 'unidades' no son consumo. Ver el COMMENT de unidades_consumo_cobradas para el caso del 899", True),
+    ("cargo",      "concepto_consumo_sin_legalizar", "899", "INT",  "899 = CONSUMO ENERGIA SIN LEGALIZAR. Es consumo irregular, tipicamente de recuperacion. Se deja FUERA de conceptos_consumo_medido a proposito: contarlo como consumo normal inflaria la linea base y taparia justo el Caso 17 que R2 busca. Se publica aparte", True),
     ("cargo",      "causal_pno",                   "74",    "INT",    "causal de perdida no operacional en cargos: DETECTA la PNO", True),
     ("cargo",      "programa_facturacion_normal",  "5",     "INT",    "5 = FGCA, proceso normal de facturacion. Cualquier otro programa es un cargo inyectado por otra funcionalidad", True),
     ("cargo",      "programa_pno",                 "307",   "INT",    "programa de PNO en cargos", True),

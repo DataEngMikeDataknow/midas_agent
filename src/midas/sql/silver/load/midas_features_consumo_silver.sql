@@ -72,7 +72,14 @@ cargos_periodo AS (
         id_periodo_consumo,
         SUM(valor_con_signo)                                                   AS valor_cargos_periodo,
         SUM(CASE WHEN NOT es_facturacion_normal THEN valor_con_signo END)      AS valor_cargos_programa_anormal,
-        SUM(CASE WHEN causal_cod = {p_causal_consumo_normal} THEN unidades END) AS unidades_consumo_cobradas,
+        -- Filtra por CONCEPTO, no por causal. La causal -1 es el 99% de las lineas:
+        -- sumar por ella mezclaba unidades de consumo con cargo fijo, alumbrado y
+        -- contribuciones, cuyas "unidades" ni siquiera son comparables entre si.
+        -- Corregido el 2026-08-03 con el catalogo real de conceptos.
+        SUM(CASE WHEN concepto_cod IN ({p_conceptos_consumo_medido}) THEN unidades END) AS unidades_consumo_cobradas,
+        -- El consumo sin legalizar va SEPARADO, no sumado: es consumo irregular y
+        -- meterlo en la linea base taparia el Caso 17 en vez de revelarlo.
+        SUM(CASE WHEN concepto_cod = {p_concepto_consumo_sin_legalizar} THEN unidades END) AS unidades_consumo_sin_legalizar,
         MAX(CASE WHEN es_pno THEN true ELSE false END)                         AS tiene_cargo_pno,
         MAX(CASE WHEN es_recuperacion THEN true ELSE false END)                AS tiene_cargo_recuperacion
     FROM {catalog}.{schema}.midas_historial_cargos_silver
@@ -130,6 +137,7 @@ enriquecido AS (
         c.valor_cargos_periodo,
         c.valor_cargos_programa_anormal,
         c.unidades_consumo_cobradas,
+        c.unidades_consumo_sin_legalizar,
         c.tiene_cargo_pno,
         c.tiene_cargo_recuperacion,
         s.fecha_ultima_reconexion,
@@ -184,6 +192,7 @@ SELECT
     valor_cargos_periodo,
     valor_cargos_programa_anormal,
     unidades_consumo_cobradas,
+    unidades_consumo_sin_legalizar,
     (valor_cargos_periodo - LAG(valor_cargos_periodo) OVER w_orden)
         / NULLIF(ABS(LAG(valor_cargos_periodo) OVER w_orden), 0)               AS delta_valor_pct,
     (unidades_consumo_cobradas - LAG(unidades_consumo_cobradas) OVER w_orden)
