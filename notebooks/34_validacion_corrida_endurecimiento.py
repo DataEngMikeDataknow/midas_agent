@@ -98,51 +98,66 @@ else:
     print(f"\n  Versiones con escritura de datos: {escrituras[:8]}")
 
     if len(escrituras) >= 2:
-        version_previa = escrituras[1]
-        chequeo("V1", "hay una versión anterior para comparar", "OK",
-                obtenido=f"actual={escrituras[0]}, previa={version_previa}")
+        chequeo("V1", "hay historial para comparar", "OK",
+                obtenido=f"{len(escrituras)} escrituras, actual=v{escrituras[0]}",
+                nota="se recorren todas: comparar solo contra la anterior falla si el "
+                     "job corrió varias veces después del cambio")
     else:
-        chequeo("V1", "hay una versión anterior para comparar", "N/A",
-                nota="solo una escritura en el historial: no hay antes contra qué comparar")
+        chequeo("V1", "hay historial para comparar", "N/A",
+                nota="solo una escritura: no hay antes contra qué comparar")
 
 # COMMAND ----------
 titulo("V1 - ¿Bajaron las unidades de consumo?")
 
-if version_previa is None:
+if not escrituras:
     chequeo("V1", "comparación antes/después", "N/A")
 else:
-    # SOLO se selecciona unidades_consumo_cobradas: unidades_consumo_sin_legalizar NO
-    # existia en la version previa y pedirla romperia la lectura historica.
-    actual = spark.sql(
-        f"SELECT SUM(unidades_consumo_cobradas) AS t, COUNT(*) AS n "
-        f"FROM {PREFIJO}.{OBJ}").collect()[0]
-    previa = spark.sql(
-        f"SELECT SUM(unidades_consumo_cobradas) AS t, COUNT(*) AS n "
-        f"FROM {PREFIJO}.{OBJ} VERSION AS OF {version_previa}").collect()[0]
+    # NO se compara solo contra la escritura inmediatamente anterior: si el job corrió
+    # varias veces DESPUÉS del cambio, las dos últimas versiones son ambas posteriores y
+    # dan idénticas. Eso pasó el 2026-08-03 y produjo una FALLA que era un defecto del
+    # chequeo, no de los datos.
+    #
+    # Se recorre TODO el historial y se busca dónde SALTA el valor. Así el chequeo no
+    # depende de cuántas veces se haya corrido el job.
+    #
+    # Solo se pide unidades_consumo_cobradas: unidades_consumo_sin_legalizar no existía
+    # en las versiones viejas y pedirla rompería la lectura histórica.
+    serie = []
+    for v in escrituras[:12]:
+        try:
+            r = spark.sql(f"SELECT SUM(unidades_consumo_cobradas) AS t, COUNT(*) AS n "
+                          f"FROM {PREFIJO}.{OBJ} VERSION AS OF {v}").collect()[0]
+            serie.append((v, float(r["t"] or 0), int(r["n"])))
+        except Exception as e:                                  # noqa: BLE001
+            print(f"  v{v}: no legible ({type(e).__name__})")
 
-    t_act = float(actual["t"] or 0)
-    t_pre = float(previa["t"] or 0)
-    print(f"  Versión previa ({version_previa}): {t_pre:>18,.2f} unidades | {previa['n']:,} filas")
-    print(f"  Versión actual           : {t_act:>18,.2f} unidades | {actual['n']:,} filas")
+    print(f"  {'versión':>8}  {'unidades':>20}  {'filas':>8}")
+    for v, t, n in serie:
+        print(f"  {v:>8}  {t:>20,.2f}  {n:>8,}")
 
-    if t_pre == 0:
-        chequeo("V1", "el total bajó tras el cambio de filtro", "REVISAR",
-                obtenido="la versión previa sumaba 0", nota="revisar manualmente")
+    distintos = sorted({round(t, 2) for _, t, _ in serie})
+    if len(serie) < 2:
+        chequeo("V1", "el filtro por concepto cambió el resultado", "N/A",
+                nota="una sola versión legible")
+    elif len(distintos) == 1:
+        chequeo("V1", "el filtro por concepto cambió el resultado", "FALLA",
+                "al menos 2 totales distintos en el historial", "todos iguales",
+                nota="el total nunca cambió: el filtro por concepto no llegó a aplicarse "
+                     "en ninguna corrida. Revisa conceptos_consumo_medido y el orden "
+                     "crear_objetos -> bronze_to_silver")
     else:
-        caida = 100.0 * (t_pre - t_act) / abs(t_pre)
-        print(f"  Diferencia               : {t_pre - t_act:>18,.2f}  ({caida:.2f}% de caída)")
-        chequeo("V1", "el total bajó tras el cambio de filtro",
-                "OK" if t_act < t_pre else "FALLA",
-                "actual < previa", f"{caida:.2f}% de caída",
-                nota="" if t_act < t_pre else
-                     "NO bajó: el filtro por concepto no se está aplicando. Revisa que "
-                     "crear_objetos haya sembrado conceptos_consumo_medido y que la "
-                     "carga de Silver haya corrido DESPUÉS")
-
-    chequeo("V1", "el número de filas no cambió", "OK" if actual["n"] == previa["n"] else "REVISAR",
-            f"{previa['n']:,}", f"{actual['n']:,}",
-            nota="" if actual["n"] == previa["n"] else
-                 "cambió el grano o el volumen de origen; no es necesariamente un error")
+        actual_t = serie[0][1]
+        chequeo("V1", "el filtro por concepto cambió el resultado", "OK",
+                obtenido=f"{len(distintos)} totales distintos; actual={actual_t:,.2f}",
+                nota="el salto entre versiones marca la corrida donde entró el filtro")
+        # El total de hoy debe ser el MENOR del historial: el filtro nuevo es mas
+        # restrictivo que el viejo (causal -1 abarcaba el 99% de las lineas).
+        chequeo("V1", "el total actual es el más bajo del historial",
+                "OK" if abs(actual_t - min(distintos)) < 0.01 else "REVISAR",
+                f"{min(distintos):,.2f}", f"{actual_t:,.2f}",
+                nota="" if abs(actual_t - min(distintos)) < 0.01 else
+                     "hay una versión con menos unidades que la actual: revisa si el "
+                     "parámetro cambió entre corridas")
 
 # COMMAND ----------
 titulo("V1 - El 899 va aparte y no está mezclado")
@@ -188,14 +203,33 @@ try:
           FROM {PREFIJO}.midas_log_cargas l
           JOIN {PREFIJO}.midas_control_cargas c ON c.id_carga = l.id_carga
     """)
-    hoy = log.filter(F.to_date("fecha_inicio") == F.current_date())
-    n_hoy = hoy.count()
-
-    if n_hoy == 0:
-        chequeo("V2", "hay registros de hoy", "REVISAR", "> 0", "0",
-                nota="¿la corrida fue en otra fecha? revisa el rango manualmente")
+    # VENTANA MÓVIL desde la última carga, NO `current_date()`.
+    #
+    # El job corre por la tarde-noche en UTC y la validación suele hacerse después. El
+    # 2026-08-04 el cluster marcaba 02:48 UTC y la última carga era de las 23:29 UTC del
+    # día anterior: con filtro por fecha de calendario el bloque daba CERO registros y
+    # parecía que el job no había corrido. Cruzar la medianoche UTC no es una anomalía,
+    # es el caso normal.
+    ultima = log.agg(F.max("fecha_fin").alias("m")).collect()[0]["m"]
+    if ultima is None:
+        chequeo("V2", "hay corridas registradas", "FALLA", "> 0", "0",
+                nota="la bitácora está vacía")
+        hoy = log.limit(0)
     else:
-        chequeo("V2", "registros de hoy en la bitácora", "OK", obtenido=f"{n_hoy:,}")
+        VENTANA_H = 6  # una corrida completa cabe de sobra
+        hoy = log.filter(F.col("fecha_inicio") >=
+                         F.lit(ultima) - F.expr(f"INTERVAL {VENTANA_H} HOURS"))
+        edad_h = (spark.sql("SELECT CURRENT_TIMESTAMP() AS t").collect()[0]["t"]
+                  - ultima).total_seconds() / 3600.0
+        print(f"  Última carga: {ultima} ({edad_h:.1f}h atrás)")
+        chequeo("V2", "registros de la última corrida", "OK",
+                obtenido=f"{hoy.count():,} en las {VENTANA_H}h previas a {ultima}")
+        chequeo("V2", "la última corrida es reciente",
+                "OK" if edad_h <= 36 else "REVISAR", "<= 36h", f"{edad_h:.1f}h",
+                nota="" if edad_h <= 36 else "el job no corre desde hace más de un día")
+
+    n_hoy = hoy.count()
+    if n_hoy > 0:
 
         por_estado = {r["estado"]: r["n"] for r in
                       hoy.groupBy("estado").agg(F.count("*").alias("n")).collect()}
@@ -268,33 +302,78 @@ except Exception as e:                                          # noqa: BLE001
 # MAGIC publica datos viejos **sin dar ninguna señal de error**.
 
 # COMMAND ----------
-titulo("V3 - Última modificación de cada objeto")
+titulo("V3 - Última ESCRITURA DE DATOS de cada objeto")
 
+# NO se usa information_schema.tables.last_altered.
+#
+# Ese campo registra cuándo cambió la DEFINICIÓN de la tabla —schema, propiedades,
+# comentarios—, no cuándo se escribieron datos. Un `insertInto(overwrite=True)` reemplaza
+# todas las filas sin tocar la definición, así que last_altered no se mueve.
+#
+# El 2026-08-04 eso produjo dos FALLA falsas: tres Bronze aparecían con fechas de hace
+# días cuando la bitácora mostraba que habían cargado EXITOSO esa misma noche. Lo que
+# medía era estabilidad de esquema, no frescura de datos.
+#
+# El registro de transacciones de Delta (DESCRIBE HISTORY) sí es fuente de verdad sobre
+# escrituras, y viene del storage, no del metastore.
 try:
-    t = spark.sql(f"""
-        SELECT table_name, table_type, last_altered,
-               ROUND((UNIX_TIMESTAMP(CURRENT_TIMESTAMP()) -
-                      UNIX_TIMESTAMP(last_altered)) / 3600.0, 1) AS horas
-          FROM {CATALOG}.information_schema.tables
-         WHERE table_schema = '{SCHEMA}'
+    objetos = [r["table_name"] for r in spark.sql(f"""
+        SELECT table_name FROM {CATALOG}.information_schema.tables
+         WHERE table_schema = '{SCHEMA}' AND table_type <> 'VIEW'
            AND (table_name LIKE 'midas_%_bronze' OR table_name LIKE 'midas_%_silver')
-         ORDER BY last_altered
-    """)
+         ORDER BY table_name
+    """).collect()]
+
+    OPS_ESCRITURA = ("WRITE", "MERGE", "DELETE", "UPDATE", "CREATE TABLE AS SELECT",
+                     "CREATE OR REPLACE TABLE AS SELECT", "REPLACE TABLE AS SELECT")
+    filas_h = []
+    for obj in objetos:
+        try:
+            h = (spark.sql(f"DESCRIBE HISTORY {PREFIJO}.{obj}")
+                      .filter(F.col("operation").isin(*OPS_ESCRITURA))
+                      .agg(F.max("timestamp").alias("ts")).collect()[0]["ts"])
+            filas_h.append((obj, h))
+        except Exception as e:                                  # noqa: BLE001
+            print(f"  {obj}: sin historial legible ({type(e).__name__})")
+
+    t = spark.createDataFrame(
+        [(o, ts) for o, ts in filas_h if ts is not None],
+        "table_name string, ultima_escritura timestamp").orderBy("ultima_escritura")
     display(t)
 
-    viejos = [r["table_name"] for r in t.filter(F.col("horas") > 24).collect()]
-    inesperados = [v for v in viejos if v not in RETIRADAS_V3]
-    esperados = [v for v in viejos if v in RETIRADAS_V3]
+    # El corte NO es contra "ahora" sino contra la tabla MÁS RECIENTE del esquema: lo
+    # que importa es si un objeto se quedó fuera de la última corrida, no cuántas horas
+    # pasaron desde que se validó. Con el corte absoluto, validar al día siguiente
+    # marcaba como rezagado todo el esquema.
+    filas = t.collect()
+    if not filas:
+        chequeo("V3", "hay objetos que revisar", "N/A")
+    else:
+        mas_reciente = max(r["ultima_escritura"] for r in filas)
+        rezagados = [(r["table_name"], r["ultima_escritura"]) for r in filas
+                     if (mas_reciente - r["ultima_escritura"]).total_seconds() > 6 * 3600]
+        print(f"  Escritura más reciente del esquema: {mas_reciente}")
 
-    chequeo("V3", "sin objetos rezagados inesperados",
-            "OK" if not inesperados else "FALLA", "ninguno", inesperados or "ninguno",
-            nota="" if not inesperados else
-                 "estos objetos tienen datos de una corrida anterior")
-    if esperados:
-        chequeo("V3", "las tablas RETIRADAS siguen rezagadas", "OK",
-                obtenido=esperados,
-                nota="esperado: están desactivadas en el control, nada las escribe. "
-                     "Confirma que scripts/migracion_v3_limpieza.sql sigue sin ejecutarse")
+        inesperados = [(n, f) for n, f in rezagados if n not in RETIRADAS_V3]
+        esperados = [n for n, _ in rezagados if n in RETIRADAS_V3]
+
+        chequeo("V3", "sin objetos fuera de la última corrida",
+                "OK" if not inesperados else "FALLA", "ninguno",
+                [f"{n} ({f:%Y-%m-%d %H:%M})" for n, f in inesperados] or "ninguno",
+                nota="" if not inesperados else
+                     "estos objetos NO se escribieron en la última corrida: publican "
+                     "datos de días anteriores sin dar ninguna señal de error")
+        if esperados:
+            chequeo("V3", "las RETIRADAS siguen rezagadas", "OK", obtenido=esperados,
+                    nota="esperado: desactivadas en el control, nada las escribe")
+
+        # Si ya no existen, la limpieza se ejecutó. No es un fallo, pero conviene saberlo.
+        presentes = {r["table_name"] for r in filas}
+        borradas = [x for x in RETIRADAS_V3 if x not in presentes]
+        if borradas:
+            chequeo("V3", "las RETIRADAS ya no existen", "OK", obtenido=borradas,
+                    nota="scripts/migracion_v3_limpieza.sql SÍ se ejecutó. Actualiza "
+                         "RETIRADAS_V3 en este notebook si ya no aplica")
 except Exception as e:                                          # noqa: BLE001
     chequeo("V3", "information_schema legible", "N/A", nota=f"{type(e).__name__}: {e}")
 
@@ -303,25 +382,29 @@ titulo("V3 - ¿Alguien más escribe la tabla ADOPTADA?")
 
 # El 31 de julio la _bronze se actualizo a las 14:00:20 y la _silver a las 14:01:05,
 # y NO fue nuestro pipeline. Dos escritores sobre el mismo objeto es un problema real.
+# DESCRIBE HISTORY trae la columna `userName`: dice QUIÉN escribió, no solo cuándo. Es
+# la respuesta directa a la pregunta abierta desde el 31 de julio, y mucho mejor que
+# comparar last_altered (que ni siquiera registra escrituras de datos).
+ADOPTADA = "midas_datos_detalle_solicitudes_silver"
 try:
-    par = spark.sql(f"""
-        SELECT table_name, created_by, last_altered
-          FROM {CATALOG}.information_schema.tables
-         WHERE table_schema = '{SCHEMA}'
-           AND table_name IN ('midas_datos_detalle_solicitudes_bronze',
-                              'midas_datos_detalle_solicitudes_silver')
-    """).collect()
-    for r in par:
-        print(f"  {r['table_name']:45s} alterada={r['last_altered']}  creada_por={r['created_by']}")
-    if len(par) == 2:
-        d = abs((par[0]["last_altered"] - par[1]["last_altered"]).total_seconds())
-        chequeo("V3", "bronze y silver de solicitudes en la misma ventana",
-                "OK" if d < 3600 else "REVISAR",
-                "< 1h de diferencia", f"{d/60:.1f} min",
-                nota="" if d < 3600 else
-                     "si la _silver es más nueva que nuestra corrida, hay otro escritor")
+    h = (spark.sql(f"DESCRIBE HISTORY {PREFIJO}.{ADOPTADA}")
+              .select("version", "timestamp", "operation", "userName")
+              .orderBy(F.col("version").desc()).limit(15))
+    display(h)
+
+    escritores = [r["userName"] for r in h.collect() if r["userName"]]
+    distintos = sorted(set(escritores))
+    print(f"  Identidades que han escrito la tabla adoptada: {distintos}")
+
+    chequeo("V3", "un solo escritor sobre la tabla adoptada",
+            "OK" if len(distintos) <= 1 else "REVISAR",
+            "1 identidad", f"{len(distintos)}: {distintos}",
+            nota="" if len(distintos) <= 1 else
+                 "hay más de un proceso escribiendo el mismo objeto. Identifica cuál "
+                 "antes de que se pisen: es la conversación pendiente con el dueño del "
+                 "modelo legacy")
 except Exception as e:                                          # noqa: BLE001
-    chequeo("V3", "tabla adoptada", "N/A", nota=f"{type(e).__name__}: {e}")
+    chequeo("V3", "historial de la tabla adoptada", "N/A", nota=f"{type(e).__name__}: {e}")
 
 # COMMAND ----------
 # MAGIC %md
