@@ -159,6 +159,11 @@ _MIGRACION_V3 = {
     "midas_datos_investigacion_consumo_bronze": [
         ("fecha_ini_consumo", "STRING"), ("fecha_fin_consumo", "STRING"),
     ],
+    # 2026-08-05: catalogo de estado_pno entregado por negocio (R/E/F/N/P), resuelto
+    # inline en la query. Al final de la tabla porque insertInto es posicional.
+    "midas_datos_perdidas_no_operacionales_bronze": [
+        ("estado_pno_desc", "STRING"),
+    ],
 }
 
 for tabla, columnas in _MIGRACION_V3.items():
@@ -208,6 +213,27 @@ _MIGRACION_SILVER = {
     # causal (-1 era el 99% de las líneas y no aislaba el consumo). El consumo sin
     # legalizar se publica aparte para no contaminar la línea base de R2.
     "midas_features_consumo_silver": [
+        # 2026-08-05: R7, el precedente historico que reemplazo a la "tolerancia".
+        ("tuvo_consumo_alto_historico", "BOOLEAN",
+         "R7. El servicio YA tuvo consumos por encima del limite superior en algun "
+         "periodo ANTERIOR. Negocio reencuadro esto el 2026-08-05: la 'tolerancia' no es "
+         "un porcentaje sobre el limite de este periodo, es PRECEDENTE del propio "
+         "servicio. Es REFUERZO de la decision, no su reemplazo. NULL cuando ningun "
+         "periodo previo tenia limite usable: el 29,7% de las filas no lo tiene, y ahi "
+         "'no tuvo' seria un negativo fabricado."),
+        ("n_periodos_previos_con_limite", "BIGINT",
+         "R7. Cuantos periodos previos tenian limite superior mayor que cero. Publicado "
+         "para que se sepa sobre cuanta historia se evaluo el precedente; con 0, "
+         "tuvo_consumo_alto_historico es NULL por construccion."),
+        ("limite_superior", "DOUBLE",
+         "R7. Limite superior del periodo (lectelme.leemlisu). Es SENAL, nunca regla de "
+         "decision. Nulo o cero en el 29,7% de las filas. OJO: el limite INFERIOR suele "
+         "ser cero, asi que 'dentro de limites' por si solo no discrimina nada."),
+        ("consumo_supera_limite_actual", "BOOLEAN",
+         "R7. El consumo de ESTE periodo supera su limite superior. Distinto de "
+         "tuvo_consumo_alto_historico, que mira el pasado. El agente los combina: "
+         "superar el limite teniendo precedente pesa distinto que superarlo por primera "
+         "vez."),
         ("unidades_consumo_sin_legalizar", "DOUBLE",
          "R2. Unidades del concepto 899 CONSUMO ENERGIA SIN LEGALIZAR. Va SEPARADO de "
          "unidades_consumo_cobradas a proposito: es consumo irregular (tipicamente "
@@ -528,7 +554,8 @@ _PARAMS = [
 
     # ── Cargos ──
     ("cargo",      "causal_consumo_normal",        "-1",    "INT",    "Causal 'sin novedad'. NO aisla el consumo: datos 2026-08-03 muestran que -1 es el 99% de las lineas (21.596 de 21.844); solo excluye las causales especiales (74 PNO, 73 abono a diferido, 55 descarga terceros). Se conserva porque sigue siendo util para excluir esas causales, pero las UNIDADES de consumo salen de conceptos_consumo_medido", True),
-    ("cargo",      "conceptos_consumo_medido",     "87,90,546,550,552", "INT_LIST", "Conceptos que representan consumo MEDIDO del servicio (kWh o m3 realmente consumidos). Confirmados con datos 2026-08-03 sobre los 15 conceptos que contienen 'CONSUMO': 87 SIN IVA, 90 ACTIVA, 546 ACTIVA PUNTA, 550 AGUA POTABLE, 552 RESIDUAL. Se EXCLUYEN los derivados (contribuciones 9503/9512/9513/9637/9638, subsidio 9504, cuotas de financiacion 3087/3090/3845) porque sus 'unidades' no son consumo. Ver el COMMENT de unidades_consumo_cobradas para el caso del 899", True),
+    ("cargo",      "conceptos_consumo_medido",     "87,90,545,546", "INT_LIST", "Conceptos de consumo MEDIDO de energia (kWh realmente consumidos): 87 SIN IVA, 90 ACTIVA, 545 ACTIVA FUERA DE PUNTA, 546 ACTIVA PUNTA. CORREGIDO 2026-08-05 contra el catalogo COMPLETO de 143 conceptos. Se agrego el 545 (992.655 unidades, $693M, el 4o por valor) que la version anterior omitia: la busqueda se hizo por descripcion que contuviera 'CONSUMO' y el 545 dice 'CONS ENERGIA' abreviado. Se quitaron 550 y 552 (agua): NO EXISTEN en los datos. Se EXCLUYEN los derivados (contribuciones, subsidios, cuotas) porque sus 'unidades' no son consumo, y los reactivos 547/548 (ver conceptos_consumo_reactivo)", True),
+    ("cargo",      "conceptos_consumo_reactivo",   "93,547,548", "INT_LIST", "PENDIENTE-NEG. Consumo REACTIVO medido: 93 EXC. REACTIVA INDUCTIVA, 547 REACTIVA FUERA DE PUNTA, 548 REACTIVA PUNTA. Se siembra INACTIVO: la decision de si la reactiva entra a unidades_consumo_cobradas es de negocio, no tecnica. Dato 2026-08-05: suman 109.180 unidades, ~3% del total medido. El catalogo tambien da el mapeo concepto->tipo (90/545/546 activa, 93/547/548 reactiva) que permitiria repartir delta_valor_pct por tipo", False),
     ("cargo",      "concepto_consumo_sin_legalizar", "899", "INT",  "899 = CONSUMO ENERGIA SIN LEGALIZAR. Es consumo irregular, tipicamente de recuperacion. Se deja FUERA de conceptos_consumo_medido a proposito: contarlo como consumo normal inflaria la linea base y taparia justo el Caso 17 que R2 busca. Se publica aparte", True),
     ("cargo",      "causal_pno",                   "74",    "INT",    "causal de perdida no operacional en cargos: DETECTA la PNO", True),
     ("cargo",      "programa_facturacion_normal",  "5",     "INT",    "5 = FGCA, proceso normal de facturacion. Cualquier otro programa es un cargo inyectado por otra funcionalidad", True),
@@ -541,7 +568,12 @@ _PARAMS = [
     # ── Consumo / lectura ──
     ("consumo",    "calificacion_investigacion",     "5055", "INT", "calificacion que marca consumo en investigacion", True),
     ("consumo",    "marca_funcion_investigacion", "P_SOLICITUD_DE_INVESTIGACION", "STRING", "token en cossfufa que delata consumo en investigacion. Es la fuente MAS FIABLE del flag: vive en la fila del propio consumo y no requiere join", True),
-    ("consumo",    "calificacion_medidor_conforme",  "5097", "INT", "MEDIDOR CONFORME CALIBRACION (Caso 12)", True),
+    ("consumo",    "calificacion_normal",            "1",    "INT", "CONFIRMADO 2026-08-05 contra el catalogo de 31 valores: '1-NORMAL' es el unico valor normal de consumo (3.828 filas, el mas frecuente). Negocio confirmo que no hay otros equivalentes", True),
+    # 5097 NO EXISTE. El catalogo real (31 valores, 2026-08-05) no lo tiene; lo que si
+    # existe es 5091-MEDIDOR NO CONFORME CALIBRACION, que es el OPUESTO semantico. El
+    # parametro estaba ACTIVO apuntando a un codigo inexistente, asi que cualquier
+    # comparacion contra el daba siempre falso sin que nadie lo notara.
+    ("consumo",    "calificacion_medidor_no_conforme", "5091", "INT", "CORREGIDO 2026-08-05. '5091-MEDIDOR NO CONFORME CALIBRACION' (1 fila en dllo). Sustituye a calificacion_medidor_conforme=5097, que apuntaba a un codigo que NO existe en el catalogo. OJO al signo: este marca NO conforme; el Caso 12 buscaba el conforme, que no aparece en los datos", True),
     ("lectura",    "observacion_cambio_medidor",     "31",   "INT", "obselect 31 = MEDIDOR CAMBIADO. Complementa a la serie, que no siempre se actualiza", True),
     ("lectura",    "observacion_lectura_menor",      "34",   "INT", "obselect 34 = LECTURA MENOR", True),
     # servsusc.SESUFERE = 31/12/4732 es el comodin de "servicio activo" del sistema Open,
@@ -555,13 +587,27 @@ _PARAMS = [
 
     # ═══ PENDIENTE-NEG: propuestos por ingenieria, SIN confirmar por negocio ═══
     # Se siembran inactivos a proposito. La feature que dependa de ellos sale NULL.
-    ("consumo",    "tolerancia_vuelta_falsa",      "0.95", "DOUBLE", "PENDIENTE-NEG. Ratio consumo/10^digitos a partir del cual se sospecha vuelta falsa", False),
+    ("consumo",    "factor_reactiva",              "0.5",  "DOUBLE", "CONFIRMADO por negocio 2026-08-05 sin cambios: factor 0.5 de la energia reactiva. Se siembra ACTIVO para que quede como configuracion efectiva y no cableado en ninguna parte", True),
+    # El umbral pasa a medirse contra la VUELTA COMPLETA del medidor, no contra 10^digitos.
+    # Datos 2026-08-05: en el caso extremo (SS 94896179, lectura 26.483 -> 43, medidor de 5
+    # digitos) la vuelta completa es 99.999-26.483+43 = 73.559 y facturaron 6.735, o sea el
+    # sistema SI la manejo bien. La formula vieja daba 6.735/100.000 = 0,067 y por eso
+    # NINGUN umbral razonable detectaba nada: media contra el rango del medidor, que solo
+    # coincide con la vuelta si la lectura anterior fuera cero.
+    ("consumo",    "tolerancia_vuelta_falsa",      "0.95", "DOUBLE", "PENDIENTE-NEG. Proporcion consumo_facturado / vuelta_completa a partir de la cual se sospecha que se facturo una vuelta falsa. Cerca de 1 significa que cobraron la vuelta entera. Sigue INACTIVO: con la formula corregida hay que volver a mirar la distribucion antes de fijar el corte", False),
     ("lectura",    "periodos_lectura_decreciente", "2",    "INT",    "PENDIENTE-NEG. Cuantos periodos consecutivos hacen 'sostenido'", False),
     # OJO: el prompt de Silver traia estos dos INVERTIDOS. Segun el diccionario del
     # proyecto, 300 = Reconexion por Pago y 56 = Suspension por no Pago.
     ("solicitud",  "tipo_solicitud_reconexion",    "300",  "INT",    "CONFIRMADO con datos 2026-08-03: el valor literal en Bronze es '300 - Reconexion por Pago' (231 filas en dllo). El plan original lo traia invertido con suspension", True),
     ("solicitud",  "tipo_solicitud_suspension",    "56",   "INT",    "CONFIRMADO con datos 2026-08-03: el valor literal en Bronze es '56 - Suspension por no Pago' (269 filas en dllo)", True),
     ("solicitud",  "tipo_solicitud_investigacion", "100207", "INT",  "CONFIRMADO con datos 2026-08-03: '100207 - Solicitud de Investigacion de Consumos' (221 filas). Es UNA de las 3 fuentes del flag de investigacion; la mas fiable sigue siendo funcion_calculo, que vive en la fila del propio consumo", True),
+    # Los cuatro que faltaban. Con estos, los 7 codigos relevantes quedan CONFIRMADOS
+    # contra el catalogo real de tipo_solicitud (14 valores, 2026-08-05), no inferidos
+    # de videos como estaban antes.
+    ("solicitud",  "tipo_solicitud_gestion_pno",   "288",  "INT",    "CONFIRMADO 2026-08-05: '288 - Gestion Administrativa de Perdidas No Operacionales' (26 filas). Es el tramite administrativo de la PNO; el expediente vive en la Bronze de PNO y la deteccion en es_pno de cargos", True),
+    ("solicitud",  "tipo_solicitud_ajuste",        "289",  "INT",    "CONFIRMADO 2026-08-05: '289 - Aprobacion de Ajustes de Facturacion' (9 filas). Era el ultimo de los 7 codigos sin verificar. Marca que YA hubo un ajuste aprobado sobre la facturacion del servicio", True),
+    ("solicitud",  "tipo_solicitud_retiro_no_pago", "15",  "INT",    "CONFIRMADO 2026-08-05: '15 - Retiro por No Pago'. Un retiro explica un consumo cero o parcial sin que haya anomalia de medicion", True),
+    ("solicitud",  "tipo_solicitud_reinstalacion", "42",   "INT",    "CONFIRMADO 2026-08-05: '42 - Reinstalacion de Producto' (4 filas). Complementa a reconexion: la reinstalacion repone el servicio tras un retiro, no tras una suspension", True),
 ]
 _prows = ",\n        ".join(
     f"({_sql_val(d)}, {_sql_val(k)}, {_sql_val(v)}, {_sql_val(td)}, {_sql_val(desc)}, {_sql_val(act)})"
@@ -591,6 +637,22 @@ spark.sql(f"""
                ELSE 'DEPRECADO: renombrado a actividad_variacion_consumo (I15)' END,
            fecha_modificacion = current_timestamp()
      WHERE clave IN ('activity_caso1', 'activity_caso2') AND activo = true
+""")
+
+# 2026-08-05: `calificacion_medidor_conforme = 5097` apuntaba a un codigo que NO EXISTE.
+# El catalogo real de calificacion (31 valores) no lo tiene; lo que hay es
+# 5091-MEDIDOR NO CONFORME CALIBRACION, el opuesto semantico. Estaba ACTIVO, asi que
+# cualquier comparacion contra el daba siempre falso sin que nadie lo notara.
+#
+# Quitarlo de _PARAMS NO basta: el MERGE es insert-if-missing y jamas borra ni desactiva.
+# Hay que desactivarlo explicitamente, igual que los alias deprecados de arriba.
+spark.sql(f"""
+    UPDATE {PARAMETROS}
+       SET activo = false,
+           descripcion = 'RETIRADO 2026-08-05: el codigo 5097 NO existe en el catalogo '
+                      || 'de calificacion. Sustituido por calificacion_medidor_no_conforme=5091',
+           fecha_modificacion = current_timestamp()
+     WHERE clave = 'calificacion_medidor_conforme' AND activo = true
 """)
 print(f"OK  midas_parametros sembrada ({len(_PARAMS)} parámetros, insert-if-missing; "
       f"{sum(1 for p in _PARAMS if not p[5])} inactivos por PENDIENTE-NEG o deprecacion)")

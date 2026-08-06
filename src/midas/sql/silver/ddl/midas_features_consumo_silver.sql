@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_features_consumo_silver (
 
     -- ── Regla 3b · Caso 23b · vuelta falsa ──
     digitos_medidor          BIGINT  COMMENT 'R3b. Digitos del registrador.',
-    ratio_vuelta_falsa       DOUBLE  COMMENT 'R3b. consumo_facturado / 10^digitos. Cerca de 1 significa que se cobro casi el rango completo del medidor.',
+    ratio_vuelta_falsa       DOUBLE  COMMENT 'R3b. consumo_facturado / vuelta_completa, donde vuelta_completa = 10^digitos - lectura_anterior + lectura_actual. Cerca de 1 significa que SE COBRO LA VUELTA ENTERA, que es el error a detectar. Solo se calcula cuando la lectura RETROCEDIO; NULL en el resto. CORREGIDO 2026-08-05: antes dividia entre 10^digitos, lo que solo tiene sentido si la lectura anterior fuera cero, y por eso las 44 filas con consumo negativo daban todas menos de 0,067 y ningun umbral detectaba nada.',
     flag_vuelta_falsa        BOOLEAN COMMENT 'R3b. Consumo calculado negativo Y ratio por encima del umbral. NULL mientras tolerancia_vuelta_falsa siga sin confirmar por negocio.',
 
     -- ── Regla 4 · Caso 9 · lectura decreciente ──
@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_features_consumo_silver (
     promedio_periodos_previos        DOUBLE COMMENT 'R6. Promedio del consumo de los periodos ANTERIORES (excluye el actual) que tuvieron lectura correcta, dentro de la ventana parametrizada. EXCLUYE los periodos con cambio de medidor: su consumo calculado negativo contaminaria el promedio.',
     n_periodos_usados_en_promedio    BIGINT COMMENT 'R6. Cuantos periodos entraron realmente. Publicado para que se sepa cuando el promedio se calculo con menos de los esperados; sin este numero el promedio no es auditable.',
     desviacion_vs_promedio_pct       DOUBLE COMMENT 'R6. Desviacion del consumo del periodo contra ese promedio.',
+
+    -- ── Regla 7 · Casos 11/15 · precedente historico (refuerzo) ──
+    tuvo_consumo_alto_historico  BOOLEAN COMMENT 'R7. El servicio YA tuvo consumos por encima del limite superior en algun periodo ANTERIOR. Negocio reencuadro esto el 2026-08-05: la ''tolerancia'' no es un porcentaje sobre el limite de este periodo, es PRECEDENTE del propio servicio. Es REFUERZO de la decision, no su reemplazo. NULL cuando ningun periodo previo tenia limite usable: el 29,7% de las filas no lo tiene, y ahi ''no tuvo'' seria un negativo fabricado.',
+    n_periodos_previos_con_limite BIGINT COMMENT 'R7. Cuantos periodos previos tenian limite superior mayor que cero. Publicado para que se sepa sobre cuanta historia se evaluo el precedente; con 0, tuvo_consumo_alto_historico es NULL por construccion.',
+    limite_superior              DOUBLE  COMMENT 'R7. Limite superior del periodo (lectelme.leemlisu). Es SENAL, nunca regla de decision. Nulo o cero en el 29,7% de las filas. OJO: el limite INFERIOR suele ser cero, asi que ''dentro de limites'' por si solo no discrimina nada.',
+    consumo_supera_limite_actual BOOLEAN COMMENT 'R7. El consumo de ESTE periodo supera su limite superior. Distinto de tuvo_consumo_alto_historico, que mira el pasado. El agente los combina: superar el limite teniendo precedente pesa distinto que superarlo por primera vez.',
 
     -- ── Regla 8 · Casos 5/11/15 · investigacion ──
     flag_investigacion       BOOLEAN COMMENT 'R8. La funcion de calculo trae la marca de solicitud de investigacion, O la calificacion es la de investigacion. Es la fuente MAS FIABLE de las tres, porque vive en la fila del propio consumo.',

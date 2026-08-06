@@ -18,7 +18,8 @@
 CREATE OR REPLACE VIEW {catalog}.{schema}.midas_datos_perdidas_no_operacionales_silver (
     id_pno                 COMMENT 'FM_POSSIBLE_NTL.POSSIBLE_NTL_ID. Unico (verificado en dllo).',
     servicio_suscrito      COMMENT 'FM_POSSIBLE_NTL.NORMALIZED_PROD_ID. Equivale al servicio suscrito: confirmado por dominio de valores (27.459 de 151.173 registros cruzan contra servsusc; si fuera otro identificador la coincidencia habria sido ~0).',
-    estado_pno             COMMENT 'FM_POSSIBLE_NTL.STATUS, CRUDO. PENDIENTE-NEG: sin verificar si tiene catalogo.',
+    estado_pno             COMMENT 'FM_POSSIBLE_NTL.STATUS, codigo crudo de un caracter. Comparar SIEMPRE contra este, nunca contra el texto de la descripcion (I19). R=en inspeccion, E=excluido, F=fraude confirmado, N=fraude no detectado, P=pendiente.',
+    estado_pno_desc        COMMENT 'codigo-descripcion del estado. Catalogo entregado por negocio el 2026-08-05 y resuelto INLINE en la query de Bronze (I11): en Oracle no existe tabla catalogo para este campo, asi que es un CASE explicito. En dllo solo aparece F (fraude confirmado).',
     tipo_irregularidad     COMMENT 'codigo-descripcion desde FM_IRREGULARITY_TYPE. Outer join: NULL si la irregularidad no esta parametrizada.',
     tipo_irregularidad_cod COMMENT 'Codigo numerico de la irregularidad.',
     id_solicitud           COMMENT 'FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_silver.id_solicitud.',
@@ -35,6 +36,7 @@ SELECT
     id_pno,
     servicio_suscrito,
     estado_pno,
+    estado_pno_desc,
     tipo_irregularidad,
     CAST(REGEXP_EXTRACT(tipo_irregularidad, '^(-?[0-9]+)', 1) AS INT) AS tipo_irregularidad_cod,
     id_solicitud,

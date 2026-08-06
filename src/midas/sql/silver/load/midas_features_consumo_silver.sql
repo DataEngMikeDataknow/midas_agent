@@ -31,6 +31,9 @@ WITH periodo AS (
         MAX(dias_consumo)                        AS dias_consumo,
         MAX(consumo_facturado_periodo)           AS consumo_facturado_periodo,
         SUM(consumo_calculado)                   AS consumo_calculado,
+        -- Para R7 (precedente historico). MAX y no MIN: si hay varios medidores basta
+        -- que UNO tuviera limite superior para poder comparar.
+        MAX(limite_superior)                     AS limite_superior,
         MAX(n_medidores_periodo)                 AS n_medidores_periodo,
         SORT_ARRAY(COLLECT_SET(CASE WHEN NOT medidor_desconocido THEN medidor END)) AS medidores,
         MAX(digitos_medidor)                     AS digitos_medidor,
@@ -42,8 +45,27 @@ WITH periodo AS (
                  THEN consumo_calculado / (lectura_actual - lectura_anterior) END) AS constante_efectiva_max,
         MAX(CASE WHEN consumo_calculado < 0 THEN true ELSE false END)               AS consumo_calculado_negativo,
         MAX(CASE WHEN lectura_actual < lectura_anterior THEN true ELSE false END)   AS hay_lectura_decreciente,
+        -- R3b · VUELTA FALSA. La formula compara contra la VUELTA COMPLETA, no contra
+        -- el rango del medidor.
+        --
+        -- La version anterior era `consumo_facturado / POWER(10, digitos)`, que solo
+        -- tiene sentido si la lectura anterior fuera cero. Datos 2026-08-05, caso
+        -- extremo de dllo: SS 94896179, lectura 26.483 -> 43, medidor de 5 digitos.
+        --   * vuelta completa = 100.000 - 26.483 + 43 = 73.560
+        --   * facturado       = 6.735  ->  el sistema SI la manejo bien
+        --   * formula vieja   = 6.735 / 100.000 = 0,067
+        -- Por eso NINGUN umbral razonable detectaba nada: las 44 filas con consumo
+        -- negativo tenian todas ratio < 0,067. No es que no hubiera casos, es que se
+        -- media otra cosa.
+        --
+        -- Cerca de 1 significa "cobraron la vuelta entera", que es el error a detectar.
+        -- Solo aplica cuando la lectura RETROCEDIO: si avanzo no hubo vuelta que fingir.
         MAX(CASE WHEN digitos_medidor > 0
-                 THEN consumo_facturado / POWER(10, digitos_medidor) END)           AS ratio_vuelta_falsa,
+                  AND lectura_actual < lectura_anterior
+                  AND (POWER(10, digitos_medidor) - lectura_anterior + lectura_actual) > 0
+                 THEN consumo_facturado
+                      / (POWER(10, digitos_medidor) - lectura_anterior + lectura_actual)
+            END)                                                                   AS ratio_vuelta_falsa,
         -- Las 3 observaciones del lector, con el codigo extraido por REGEXP.
         MAX(CASE WHEN {p_observacion_cambio_medidor} IN (
                 CAST(REGEXP_EXTRACT(observacion_lectura,   '^(-?[0-9]+)', 1) AS INT),
@@ -246,6 +268,35 @@ SELECT
         / NULLIF(ABS(AVG(CASE WHEN n_medidores_periodo > 1 THEN NULL ELSE consumo_facturado_periodo END) OVER w_previos), 0)
                                                                                AS desviacion_vs_promedio_pct,
 
+    -- ── R7 · precedente historico (Caso 11/15, refuerzo) ──
+    --
+    -- Negocio reencuadro la pregunta el 2026-08-05. Lo que se pedia era "que porcentaje
+    -- de tolerancia sobre los limites, 5% o 10%". La respuesta fue que NO es un
+    -- porcentaje: el criterio real del analista es si ESE MISMO SERVICIO ya tuvo
+    -- consumos por encima de los limites en el pasado. Si ya los tuvo, y no hay otras
+    -- banderas activas, cierra sin ajuste.
+    --
+    -- La tolerancia no es un margen sobre el limite de ESTE periodo: es PRECEDENTE del
+    -- propio servicio. Por eso es una ventana historica, no un umbral.
+    --
+    -- Es REFUERZO de la decision, nunca su reemplazo: dice que el servicio ya se
+    -- comporto asi antes, no que el cobro de hoy sea correcto.
+    --
+    -- El NULL importa. Datos 2026-08-05: el 29,7% de las filas (898 nulas + 45 en cero
+    -- de 3.180) NO tiene limite superior usable. Para esas, "no tuvo consumo alto" seria
+    -- un negativo FABRICADO: la verdad es que no se puede saber. Solo se cuentan los
+    -- periodos previos que si tenian limite, y si no hubo ninguno la columna sale NULL.
+    CASE WHEN COUNT(CASE WHEN limite_superior > 0 THEN 1 END) OVER w_historia = 0
+         THEN NULL
+         ELSE COALESCE(MAX(CASE WHEN limite_superior > 0
+                                 AND consumo_facturado_periodo >= limite_superior
+                                THEN 1 END) OVER w_historia, 0) = 1
+    END                                                                        AS tuvo_consumo_alto_historico,
+    COUNT(CASE WHEN limite_superior > 0 THEN 1 END) OVER w_historia            AS n_periodos_previos_con_limite,
+    limite_superior,
+    consumo_facturado_periodo >= limite_superior
+        AND limite_superior > 0                                                AS consumo_supera_limite_actual,
+
     -- ── R8 ──
     flag_investigacion,
     COALESCE(tiene_cargo_pno, false)          AS tiene_cargo_pno,
@@ -261,4 +312,10 @@ WINDOW
     -- columna. Es la razon por la que los parametros se resuelven en Python.
     w_previos AS (PARTITION BY servicio_suscrito, tipo_consumo_cod
                   ORDER BY COALESCE(fecha_fin_consumo, DATE'1900-01-01'), id_periodo_consumo
-                  ROWS BETWEEN {p_ventana_promedio_max_periodos} PRECEDING AND 1 PRECEDING)
+                  ROWS BETWEEN {p_ventana_promedio_max_periodos} PRECEDING AND 1 PRECEDING),
+    -- R7 mira TODO el historial previo disponible, no una ventana corta: un precedente
+    -- de hace dos anios sigue siendo precedente. Excluye el periodo en analisis
+    -- (`1 PRECEDING`), porque si no la feature se responderia a si misma.
+    w_historia AS (PARTITION BY servicio_suscrito, tipo_consumo_cod
+                   ORDER BY COALESCE(fecha_fin_consumo, DATE'1900-01-01'), id_periodo_consumo
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)

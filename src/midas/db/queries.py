@@ -663,7 +663,28 @@ SELECT /*+ LEADING(fm_possible_ntl)
     to_char(fm_possible_ntl.fraud_start_date,'YYYY-MM-DD')  fecha_inicio_fraude,
     to_char(fm_possible_ntl.fraud_end_date,  'YYYY-MM-DD')  fecha_fin_fraude,
     fm_possible_ntl.order_id                                id_orden,
-    fm_possible_ntl.comment_                                comentario
+    fm_possible_ntl.comment_                                comentario,
+    -- Catalogo entregado por negocio el 2026-08-05. Se resuelve INLINE (invariante I11),
+    -- no como dimension ni en Silver.
+    --
+    -- Se usa CASE y no una subconsulta correlacionada porque en Oracle NO hay tabla
+    -- catalogo para fm_possible_ntl.status: es un codigo de un caracter sin tabla de
+    -- referencia. Cuando la hay -como confesco o ge_items- se usa la subconsulta.
+    --
+    -- VA AL FINAL a proposito: `insertInto` es POSICIONAL, asi que meter la columna
+    -- junto a estado_pno habria corrido todos los valores siguientes SIN lanzar error.
+    --
+    -- Dato 2026-08-05: en dllo solo aparece 'F' (12 filas). Los otros cuatro estados
+    -- existen en el catalogo de negocio pero no en esta muestra.
+    fm_possible_ntl.status||'-'||
+        case fm_possible_ntl.status
+            when 'R' then 'EN INSPECCION'
+            when 'E' then 'EXCLUIDO'
+            when 'F' then 'FRAUDE CONFIRMADO'
+            when 'N' then 'FRAUDE NO DETECTADO'
+            when 'P' then 'PENDIENTE'
+            else 'DESCONOCIDO'
+        end                                                 estado_pno_desc
 FROM    fm_possible_ntl,
         fm_irregularity_type
 WHERE   fm_possible_ntl.irregulari_type_id = fm_irregularity_type.irregulari_type_id (+)
