@@ -18,8 +18,12 @@
 # MAGIC (`notebooks/00_creacion_objetos_framework.py`): el DDL de las 2 tablas de
 # MAGIC control se toma textual de ahí (misma fuente = cero drift de schema).
 # MAGIC
-# MAGIC > NO crea las tablas Bronze/Silver: las crea `ingestion.py` en la primera
-# MAGIC > corrida con sus metadatos/PKs/comentarios. No duplicar esa responsabilidad.
+# MAGIC > **Fork `c2` (2026-08-11):** esta task ahora crea también las **tablas Bronze**,
+# MAGIC > desde los DDL de `src/midas/sql/bronze/ddl/`. Antes las creaba `ingestion.py`
+# MAGIC > desde el Parquet, lo que dejaba el schema a merced de un archivo que podía ser
+# MAGIC > de una corrida vieja; `ingestion.py` ya no crea tablas y **falla** si no las
+# MAGIC > encuentra. Las tablas Silver las sigue creando su propio DDL en la task
+# MAGIC > `bronze_to_silver`.
 # MAGIC >
 # MAGIC > Requiere que el principal de ejecución tenga `USE CATALOG`, `USE SCHEMA`
 # MAGIC > y `CREATE TABLE` sobre el schema destino (igual que en Vera).
@@ -115,6 +119,67 @@ if "job_name" not in existentes:
     spark.sql(f"ALTER TABLE {CONTROL} ADD COLUMN job_name STRING")
 else:
     print("job_name ya presente en midas_control_cargas (no se requiere ALTER)")
+
+# COMMAND ----------
+# ───── DDL de las tablas BRONZE ─────
+# El schema de Bronze lo declara el repo (`src/midas/sql/bronze/ddl/`), no el Parquet.
+#
+# Hasta el 2026-08-11 la tabla la creaba `saveAsTable` dentro de la task de ingesta, y solo
+# si no existia. Eso tenia dos consecuencias que se pagaron juntas: el schema salia de un
+# archivo que podia ser de una corrida vieja, y esta task —la que se supone gobierna los
+# objetos— se saltaba en silencio cualquier tabla que aun no existiera. El resultado fue un
+# UNRESOLVED_COLUMN sobre `estado_corte_facturable` tres tasks mas tarde, contra una columna
+# que nadie habia declarado que faltara.
+#
+# Ahora se crean aqui. `ingestion.py` ya NO crea tablas: falla si no la encuentra.
+#
+# Es `CREATE TABLE IF NOT EXISTS`, asi que contra una tabla existente no hace nada — por eso
+# `_MIGRACION_V3`, abajo, sigue siendo necesario para la evolucion del schema. Mismo par
+# DDL + migracion que ya usa Silver.
+import os
+import sys
+
+dbutils.widgets.text("repo_root", "")
+
+
+def _resolver_repo():
+    """Ubica la raiz del bundle que contiene src/midas/sql/bronze/ddl.
+    1) widget repo_root, 2) path del notebook via contexto Databricks, 3) cwd.
+    Mismo patron que `_resolver_src` en notebooks/10_extraer_datos_oracle.py."""
+    candidatos = []
+    rr = dbutils.widgets.get("repo_root")
+    if rr:
+        candidatos.append(rr)
+    try:
+        ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+        nb = ctx.notebookPath().get()
+        root = os.path.dirname(os.path.dirname(nb))   # sube de notebooks/ a la raiz
+        candidatos.append("/Workspace" + root)
+        candidatos.append(root)
+    except Exception as e:                            # noqa: BLE001
+        print(f"[info] no se pudo leer el path del notebook: {e}")
+    candidatos.append(os.getcwd())
+    candidatos.append(os.path.dirname(os.getcwd()))
+    for base in candidatos:
+        if base and os.path.isdir(os.path.join(base, "src", "midas", "sql", "bronze", "ddl")):
+            return base
+    raise RuntimeError(
+        "No se pudo ubicar src/midas/sql/bronze/ddl en el bundle. Setea el parametro "
+        f"repo_root con la ruta /Workspace/... que contiene src/. Probados: {candidatos}"
+    )
+
+
+_BRONZE_DDL_DIR = os.path.join(_resolver_repo(), "src", "midas", "sql", "bronze", "ddl")
+_ddl_files = sorted(f for f in os.listdir(_BRONZE_DDL_DIR) if f.endswith(".sql"))
+if not _ddl_files:
+    raise RuntimeError(f"No hay ningun .sql en {_BRONZE_DDL_DIR}. Sin DDL, la ingesta falla.")
+
+for _archivo in _ddl_files:
+    with open(os.path.join(_BRONZE_DDL_DIR, _archivo), encoding="utf-8") as fh:
+        _sql = fh.read()
+    spark.sql(_sql.format(catalog=CATALOG, schema=SCHEMA))
+    print(f"OK  DDL Bronze aplicado: {_archivo[:-4]}")
+print(f"OK  {len(_ddl_files)} DDL de Bronze ejecutados (CREATE TABLE IF NOT EXISTS)")
 
 # COMMAND ----------
 # ───── Migración guardada v3 (R3): columnas de periodo en las Bronze existentes ─────

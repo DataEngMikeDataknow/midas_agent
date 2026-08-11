@@ -32,17 +32,24 @@ VOL = (f"/Volumes/{dbutils.widgets.get('source_catalog')}"
        f"/{dbutils.widgets.get('source_volume')}"
        f"/{dbutils.widgets.get('source_base_path')}")
 
-# (tabla_actual, archivo_parquet). Mismo orden que SEED en 00_creacion_objetos_midas.
+# (tabla, archivo_parquet). Mismo orden que SEED en 00_creacion_objetos_midas.
+#
+# HALLAZGO de la corrida del 2026-08-11 (con los nombres de entonces, sin `c2`): los
+# Parquet de las 6 tablas de la cadena Caso 1 estaban STALE — no traian las columnas que
+# sus queries proyectan desde v3 (`estado_corte_facturable`, `anio_facturacion`,
+# `fecha_ini_consumo`...). Esa es la causa real del UNRESOLVED_COLUMN, no un escritor
+# externo. Por eso los DDL se reconstruyeron como Parquet + la cola de `_MIGRACION_V3`,
+# y por eso la primera corrida del fork tiene que incluir `extraer_datos_oracle`.
 TABLAS = [
-    ("midas_ordenes_calidad_pendientes_bronze",      "ordenes_calidad_pendientes.parquet"),
-    ("midas_datos_basicos_producto_bronze",          "datos_basicos_producto.parquet"),
-    ("midas_datos_lecturas_producto_bronze",         "datos_lecturas_producto.parquet"),
-    ("midas_datos_consumos_producto_bronze",         "datos_consumos_producto.parquet"),
-    ("midas_datos_ordenes_previa_critica_bronze",    "datos_ordenes_previa_critica.parquet"),
-    ("midas_datos_cometarios_ordenes_bronze",        "datos_comentarios_ordenes.parquet"),
-    ("midas_datos_cuentas_cobro_bronze",             "datos_cuentas_cobro.parquet"),
-    ("midas_datos_detalle_cargos_bronze",            "datos_detalle_cargos.parquet"),
-    ("midas_datos_detalle_solicitudes_bronze",       "datos_detalle_solicitudes.parquet"),
+    ("midas_ordenes_calidad_pendientes_c2_bronze",   "ordenes_calidad_pendientes.parquet"),
+    ("midas_datos_basicos_producto_c2_bronze",       "datos_basicos_producto.parquet"),
+    ("midas_datos_lecturas_producto_c2_bronze",      "datos_lecturas_producto.parquet"),
+    ("midas_datos_consumos_producto_c2_bronze",      "datos_consumos_producto.parquet"),
+    ("midas_datos_ordenes_previa_critica_c2_bronze", "datos_ordenes_previa_critica.parquet"),
+    ("midas_datos_cometarios_ordenes_c2_bronze",     "datos_comentarios_ordenes.parquet"),
+    ("midas_datos_cuentas_cobro_c2_bronze",          "datos_cuentas_cobro.parquet"),
+    ("midas_datos_detalle_cargos_c2_bronze",         "datos_detalle_cargos.parquet"),
+    ("midas_datos_detalle_solicitudes_c2_bronze",    "datos_detalle_solicitudes.parquet"),
     ("midas_datos_consumos_contrato_bronze",         "datos_consumos_contrato.parquet"),
     ("midas_datos_investigacion_consumo_bronze",     "datos_investigacion_consumo.parquet"),
     ("midas_datos_perdidas_no_operacionales_bronze", "perdidas_no_operacionales.parquet"),

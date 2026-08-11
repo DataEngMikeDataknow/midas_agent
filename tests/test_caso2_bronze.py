@@ -4,6 +4,7 @@ consistencia del control y pasos del chain_runner. Sin Spark ni Oracle reales.
 """
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 # pyspark debe estar mockeado antes de importar los runners/framework.
@@ -37,6 +38,8 @@ TABLAS_RETIRADAS_V3 = [
 ]
 # v3 R4
 PNO_TABLE = "midas_datos_perdidas_no_operacionales_bronze"
+# El schema de Bronze (columnas, tipos, COMMENT, PK) vive aqui desde el fork `c2`.
+BRONZE_DDL_DIR = Path(__file__).resolve().parents[1] / "src" / "midas" / "sql" / "bronze" / "ddl"
 # v3 R3: columnas de periodo agregadas AL FINAL de cada query (invariante I13).
 COLUMNAS_R3 = {
     "QUERY_DATOS_LECTURA":         ["anio_facturacion", "mes_facturacion", "ciclo_facturacion"],
@@ -85,10 +88,18 @@ class TestTablesConfig(unittest.TestCase):
             self.assertNotIn(t, self.by_name, f"{t} debió retirarse en v3")
 
     def test_pno_presente_y_configurada(self):
+        """La PK y los COMMENT se verifican contra el DDL, no contra esta config.
+
+        Vivían aquí y `ingestion.py` los aplicaba al crear la tabla. Desde el fork `c2`
+        (2026-08-11) la tabla la crea `crear_objetos` desde su DDL y la ingesta ya no crea
+        nada, así que un comentario declarado aquí no llegaría nunca a Databricks: el test
+        pasaría dando una cobertura falsa. Se comprueba donde ahora está la verdad."""
         pno = self.by_name[PNO_TABLE]
-        self.assertEqual(pno["primary_key"], "id_pno")
         self.assertTrue(pno["path"].endswith("perdidas_no_operacionales.parquet"))
-        self.assertTrue(pno.get("column_comments"), "PNO sin column_comments (§7.4)")
+
+        ddl = (BRONZE_DDL_DIR / f"{PNO_TABLE}.sql").read_text(encoding="utf-8")
+        self.assertIn("PRIMARY KEY (id_pno)", ddl, "PNO sin PK en su DDL")
+        self.assertIn("COMMENT '", ddl, "PNO sin COMMENT de columna en su DDL (§7.4)")
 
     def test_nombres_unicos(self):
         nombres = [c["name"] for c in self.cfg]
@@ -99,8 +110,11 @@ class TestTablesConfig(unittest.TestCase):
             self.assertIn(t, self.by_name)
 
     def test_pk_solicitudes_compuesta(self):
-        self.assertEqual(self.by_name["midas_datos_detalle_solicitudes_c2_bronze"]["primary_key"],
-                         ["servicio_suscrito", "id_solicitud"])
+        """El grano de solicitudes es (SS, id_solicitud): la query se ejecuta una vez por
+        servicio suscrito, así que el id por sí solo no identifica la fila."""
+        ddl = (BRONZE_DDL_DIR / "midas_datos_detalle_solicitudes_c2_bronze.sql").read_text(
+            encoding="utf-8")
+        self.assertIn("PRIMARY KEY (servicio_suscrito, id_solicitud)", ddl)
 
     def test_paths_bajo_volumen(self):
         for c in self.cfg:
