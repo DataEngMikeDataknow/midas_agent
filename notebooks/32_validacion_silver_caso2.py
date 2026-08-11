@@ -14,7 +14,7 @@
 # MAGIC | **S6** | `historial_cargos`: distribución de banderas y cruce `es_pno` contra la Silver de PNO |
 # MAGIC | **S7** | `features_consumo`: las 4 columnas que DEBEN salir NULL, y las que NO |
 # MAGIC | **S8** | Nivel 2: una sola actividad, y sale de parámetros |
-# MAGIC | **S9** | **Caso 1 intacto**: conteos y las 2 columnas nuevas al final |
+# MAGIC | **S9** | Las **copias `c2` heredadas** del Caso 1: conteos y las 2 columnas nuevas al final |
 # MAGIC | **S10** | `midas_log_cargas`: una fila EXITOSO por objeto Silver |
 # MAGIC | **S11** | `midas_parametros`: qué está inactivo y qué apaga |
 # MAGIC
@@ -125,9 +125,9 @@ OBJETOS = [
     ("midas_features_consumo_silver",                "TABLE"),
     ("midas_historial_consumo_periodo_silver",       "VIEW"),
     ("midas_datos_servicios_contrato_silver",        "VIEW"),
-    # ADOPTADA: es TABLA y no es nuestra. Su schema lo fija su dueño; nosotros solo
-    # refrescamos el contenido. Por eso no se le exige comentario ni columnas de
-    # auditoría, igual que a las legacy del Caso 1.
+    # Fue ADOPTADA (sin DDL, sin comentarios exigibles) hasta el fork `c2`. Ahora es
+    # nuestra y declara sus 11 columnas con COMMENT, así que se le exige lo mismo que a
+    # cualquier tabla del Caso 2.
     ("midas_datos_detalle_solicitudes_c2_silver",       "TABLE"),
     ("midas_datos_investigacion_consumo_silver",     "VIEW"),
     ("midas_datos_perdidas_no_operacionales_silver", "VIEW"),
@@ -135,8 +135,10 @@ OBJETOS = [
 ]
 
 LEGACY_CASO1 = [o for o, _ in OBJETOS[:4]]
-# Objetos que NO definimos nosotros: no se les exige comentario por columna.
-ADOPTADAS = ["midas_datos_detalle_solicitudes_c2_silver"]
+# Aquí vivía ADOPTADAS, que eximía a detalle_solicitudes del chequeo de comentarios
+# porque su schema era de otro dueño. Con el fork `c2` la tabla es nuestra y declara sus
+# 11 columnas con COMMENT: mantener la exención habría ocultado justo lo que el fork vino
+# a construir.
 TABLAS_NUEVAS = ["midas_historial_consumo_silver",
                  "midas_historial_cargos_silver",
                  "midas_features_consumo_silver"]
@@ -214,18 +216,15 @@ for obj, _ in OBJETOS:
     sin_com = [f.name for f in campos
                if not (f.metadata or {}).get("comment", "").strip()]
 
-    if obj in ADOPTADAS:
-        chequeo("S2", f"{obj} (adoptada) columnas comentadas", "REVISAR",
-                obtenido=f"{len(campos) - len(sin_com)}/{len(campos)}",
-                nota="tabla adoptada: los comentarios son de su dueño, no nuestros")
-        continue
-
     if obj in LEGACY_CASO1:
-        # Las legacy usan CTAS: heredan lo que traiga Bronze y no declaran comentarios.
-        # No es un defecto de este trabajo; se reporta para que quede a la vista.
+        # Las cuatro heredadas del Caso 1 usan CTAS: reciben lo que traiga Bronze y no
+        # declaran comentarios. Tras el fork `c2` son copias NUESTRAS, pero siguen sin
+        # DDL propio a propósito —su SQL queda verbatim para que el contenido sea
+        # demostrablemente el mismo que produce el Caso 1—, así que la ausencia de
+        # comentarios sigue siendo esperada. Se reporta para que quede a la vista.
         chequeo("S2", f"{obj} (legacy) columnas comentadas", "REVISAR",
                 obtenido=f"{len(campos) - len(sin_com)}/{len(campos)}",
-                nota="legacy Caso 1: CTAS sin comentarios, fuera del alcance de esta entrega")
+                nota="heredada del Caso 1: CTAS sin comentarios, esperado")
         continue
 
     chequeo("S2", f"{obj} comentario de tabla",
@@ -654,14 +653,19 @@ else:
             esperado, actividades)
 
 # COMMAND ----------
-# MAGIC %md ## S9 — Caso 1 intacto
+# MAGIC %md ## S9 — Las copias heredadas del Caso 1 conservan su forma
+# MAGIC
+# MAGIC Se llamaba "Caso 1 intacto" cuando escribíamos las tablas del otro equipo. Tras el
+# MAGIC fork `c2` ya no las tocamos: esto valida **nuestras copias**, cuyo SQL quedó verbatim
+# MAGIC salvo los nombres. Esa es justamente la razón de conservar el CTAS — que el contenido
+# MAGIC siga siendo demostrablemente el mismo que produce el Caso 1.
 # MAGIC
 # MAGIC Las 2 columnas nuevas salen del `LEFT JOIN` que ya existía, así que **el conteo de
 # MAGIC filas no puede cambiar**. Si cambió, es que `datos_basicos` tiene el servicio suscrito
 # MAGIC duplicado y el join está multiplicando filas.
 
 # COMMAND ----------
-titulo("S9 - Caso 1 intacto")
+titulo("S9 - Las copias heredadas del Caso 1 conservan su forma")
 
 OBJ = "midas_ordenes_calidad_pendientes_c2_silver"
 BRZ = "midas_ordenes_calidad_pendientes_c2_bronze"

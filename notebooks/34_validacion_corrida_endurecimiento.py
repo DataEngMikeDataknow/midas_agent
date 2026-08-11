@@ -12,7 +12,8 @@
 # MAGIC |---|---|---|
 # MAGIC | **V1** | El antes y después real de `unidades_consumo_cobradas` | Usa *time travel* de Delta; el 32 solo ve el estado actual |
 # MAGIC | **V2** | Coherencia de las 3 fases de la corrida | El 32 mira Silver, no la cadena completa |
-# MAGIC | **V3** | Frescura de las 12 Bronze y los 13 Silver | Es lo que endurecimos hoy (guarda de frescura) |
+# MAGIC | **V3** | Frescura de las 12 Bronze y los 13 Silver, y un solo escritor | Es lo que endurecimos hoy (guarda de frescura) |
+# MAGIC | **V3b** | **Que dejamos de escribir los 14 objetos del Caso 1** | Criterio de aceptación del fork `c2`: nada más lo mide |
 # MAGIC | **V4** | Comentarios y parámetros tras la migración | Confirmación independiente del `ALTER COLUMN` |
 # MAGIC | **V5** | Que R5 mide algo, no solo que no es NULL | Una booleana siempre `false` pasa un chequeo de no-nulos |
 # MAGIC
@@ -382,33 +383,121 @@ except Exception as e:                                          # noqa: BLE001
     chequeo("V3", "information_schema legible", "N/A", nota=f"{type(e).__name__}: {e}")
 
 # COMMAND ----------
-titulo("V3 - ¿Alguien más escribe la tabla ADOPTADA?")
+titulo("V3 - ¿Un solo escritor sobre la tabla de solicitudes?")
 
 # El 31 de julio la _bronze se actualizo a las 14:00:20 y la _silver a las 14:01:05,
-# y NO fue nuestro pipeline. Dos escritores sobre el mismo objeto es un problema real.
-# DESCRIBE HISTORY trae la columna `userName`: dice QUIÉN escribió, no solo cuándo. Es
-# la respuesta directa a la pregunta abierta desde el 31 de julio, y mucho mejor que
-# comparar last_altered (que ni siquiera registra escrituras de datos).
-ADOPTADA = "midas_datos_detalle_solicitudes_c2_silver"
+# y NO fue nuestro pipeline. Dos escritores sobre el mismo objeto es un problema real:
+# el 2026-08-11 un CREATE OR REPLACE ajeno dejo R5 en cero sobre 3.152 filas mientras los
+# datos estaban sanos en la tabla.
+#
+# El fork `c2` deberia haberlo cerrado: la tabla ya no se comparte. Este chequeo se
+# conserva porque es lo que lo DEMUESTRA — si vuelve a aparecer una segunda identidad,
+# el fork no quedo completo. DESCRIBE HISTORY trae `userName`: dice QUIEN escribio, no
+# solo cuando, y a diferencia de last_altered si registra escrituras de datos.
+SOLICITUDES = "midas_datos_detalle_solicitudes_c2_silver"
 try:
-    h = (spark.sql(f"DESCRIBE HISTORY {PREFIJO}.{ADOPTADA}")
+    h = (spark.sql(f"DESCRIBE HISTORY {PREFIJO}.{SOLICITUDES}")
               .select("version", "timestamp", "operation", "userName")
               .orderBy(F.col("version").desc()).limit(15))
     display(h)
 
     escritores = [r["userName"] for r in h.collect() if r["userName"]]
     distintos = sorted(set(escritores))
-    print(f"  Identidades que han escrito la tabla adoptada: {distintos}")
+    print(f"  Identidades que han escrito la tabla de solicitudes: {distintos}")
 
-    chequeo("V3", "un solo escritor sobre la tabla adoptada",
+    chequeo("V3", "un solo escritor sobre la tabla de solicitudes",
             "OK" if len(distintos) <= 1 else "REVISAR",
             "1 identidad", f"{len(distintos)}: {distintos}",
             nota="" if len(distintos) <= 1 else
-                 "hay más de un proceso escribiendo el mismo objeto. Identifica cuál "
-                 "antes de que se pisen: es la conversación pendiente con el dueño del "
-                 "modelo legacy")
+                 "sigue habiendo más de un proceso escribiendo el mismo objeto. Tras el "
+                 "fork `c2` esta tabla es solo nuestra: una segunda identidad significa "
+                 "que algo quedó apuntando al objeto compartido")
 except Exception as e:                                          # noqa: BLE001
-    chequeo("V3", "historial de la tabla adoptada", "N/A", nota=f"{type(e).__name__}: {e}")
+    chequeo("V3", "historial de la tabla de solicitudes", "N/A", nota=f"{type(e).__name__}: {e}")
+
+# COMMAND ----------
+titulo("V3b - ¿Dejamos de escribir los objetos del Caso 1?")
+
+# ESTE ES EL CRITERIO DE ACEPTACION DEL FORK `c2`, y no lo mide ningún otro bloque.
+#
+# El bundle escribía estos 14 objetos que también usa el equipo del Caso 1 — los 4
+# SILVER_LEGACY con un CREATE OR REPLACE TABLE, que reemplaza la DEFINICION y no solo las
+# filas. Todo lo demás de esta validación puede salir verde y aun así seguir pisándolos:
+# lo único que lo descarta es mirar QUIEN escribió cada uno y CUANDO.
+#
+# Sus tablas NO se borran: son del otro equipo. Lo que cambia es que nosotros ya no las
+# tocamos, así que su última escritura debe ser ANTERIOR a esta corrida.
+#
+# El corte NO se cablea con una fecha. Un timestamp escrito a mano se compara contra el
+# huso que reporte DESCRIBE HISTORY, y si no coinciden el chequeo da OK sin haber medido
+# nada. Se deriva de los datos: la referencia es la escritura MAS TEMPRANA de esta corrida
+# sobre un objeto `c2`. Cualquier objeto viejo tocado despues de ese instante lo tocamos
+# nosotros en esta corrida.
+REFERENCIA_C2 = [
+    "midas_datos_basicos_producto_c2_bronze",
+    "midas_datos_detalle_solicitudes_c2_bronze",
+    "midas_datos_detalle_solicitudes_c2_silver",
+    "midas_ordenes_calidad_pendientes_c2_silver",
+]
+
+VIEJOS_CASO1 = [
+    "midas_ordenes_calidad_pendientes_bronze", "midas_datos_basicos_producto_bronze",
+    "midas_datos_lecturas_producto_bronze", "midas_datos_consumos_producto_bronze",
+    "midas_datos_ordenes_previa_critica_bronze", "midas_datos_cometarios_ordenes_bronze",
+    "midas_datos_cuentas_cobro_bronze", "midas_datos_detalle_cargos_bronze",
+    "midas_datos_detalle_solicitudes_bronze", "midas_datos_basicos_producto_silver",
+    "midas_ordenes_calidad_pendientes_silver", "midas_historial_critica_silver",
+    "midas_historial_facturacion_silver", "midas_datos_detalle_solicitudes_silver",
+]
+
+def _ultima_escritura(tabla):
+    """(timestamp, version, operation, userName) de la ultima version, o None."""
+    full = f"{PREFIJO}.{tabla}"
+    if not spark.catalog.tableExists(full):
+        return None
+    try:
+        filas = (spark.sql(f"DESCRIBE HISTORY {full}")
+                      .select("version", "timestamp", "operation", "userName")
+                      .orderBy(F.col("version").desc()).limit(1).collect())
+    except Exception as e:                                      # noqa: BLE001
+        print(f"  [info] {tabla}: {type(e).__name__}: {e}")
+        return None
+    if not filas:
+        return None
+    r = filas[0]
+    return (r["timestamp"], r["version"], r["operation"], r["userName"])
+
+
+_ref = [_ultima_escritura(t) for t in REFERENCIA_C2]
+_ref = [x for x in _ref if x]
+
+if not _ref:
+    chequeo("V3b", "objetos c2 como referencia temporal", "N/A",
+            nota="ningún objeto `c2` existe todavía: corre el job del fork antes que esto")
+else:
+    CORTE = min(x[0] for x in _ref)
+    print(f"  Referencia: la escritura más temprana de esta corrida sobre un objeto c2 "
+          f"fue {CORTE}\n")
+
+    _escritos_despues, _ausentes = [], []
+    for _t in VIEJOS_CASO1:
+        _u = _ultima_escritura(_t)
+        if _u is None:
+            _ausentes.append(_t)
+            continue
+        _ts, _v, _op, _quien = _u
+        _posterior = _ts >= CORTE
+        if _posterior:
+            _escritos_despues.append(f"{_t} (v{_v} {_ts} {_op} por {_quien})")
+        print(f"  {'!!' if _posterior else 'OK'}  {_t}: v{_v} {_ts} {_op} por {_quien}")
+    if _ausentes:
+        print(f"\n  [info] no existen en este ambiente: {_ausentes}")
+
+    chequeo("V3b", "ningún objeto del Caso 1 se escribió en esta corrida",
+            "OK" if not _escritos_despues else "FALLA",
+            "0 objetos", f"{len(_escritos_despues)}",
+            nota="" if not _escritos_despues else
+                 f"el fork NO quedó completo, seguimos escribiendo: {_escritos_despues}")
 
 # COMMAND ----------
 # MAGIC %md
