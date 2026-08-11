@@ -428,6 +428,20 @@ SEED_SILVER = [
     ("midas_ordenes_calidad_pendientes_silver",     "midas_ordenes_calidad_pendientes_silver",     "SILVER_LEGACY", 32, None),
     ("midas_historial_critica_silver",              "midas_historial_critica_silver",              "SILVER_LEGACY", 33, None),
     ("midas_historial_facturacion_silver",          "midas_historial_facturacion_silver",          "SILVER_LEGACY", 34, None),
+    # ── Insumo de las tablas Caso 2 — orden 40 ──
+    # ADOPTADA: la tabla ya existía y tiene consumidores propios; su schema manda y no
+    # le declaramos DDL. Solo refrescamos su contenido. Mismo criterio que su Bronze.
+    #
+    # CORREGIDO 2026-08-11: estaba en orden 53, DIEZ posiciones DESPUES de
+    # midas_features_consumo_silver (43), que la LEE para R5 (reconexion/suspension).
+    # Es decir, las features se calculaban siempre contra el contenido de la corrida
+    # ANTERIOR. Normalmente no se notaba porque ese contenido tambien era nuestro; el
+    # 2026-08-11 si, porque el otro escritor de esta tabla adoptada hizo un CREATE OR
+    # REPLACE a las 12:39 con otra poblacion y las features se construyeron a las 15:31
+    # leyendola: R5 salio en cero (0 de 3.152) con los datos sanos en la tabla.
+    #
+    # Solo lee Bronze, asi que puede ir antes que todo lo demas de Caso 2.
+    ("midas_datos_detalle_solicitudes_silver",      "midas_datos_detalle_solicitudes_silver",      "SILVER_TABLE_ADOPTADA", 40, None),
     # ── Nuevas Caso 2: tablas — orden 41..43 ──
     ("midas_historial_consumo_silver",              "midas_historial_consumo_silver",              "SILVER_TABLE",  41, None),
     ("midas_historial_cargos_silver",               "midas_historial_cargos_silver",               "SILVER_TABLE",  42, None),
@@ -435,9 +449,7 @@ SEED_SILVER = [
     # ── Nuevas Caso 2: vistas (Nivel 1) — orden 51..55 ──
     ("midas_historial_consumo_periodo_silver",      "midas_historial_consumo_periodo_silver",      "SILVER_VIEW",   51, None),
     ("midas_datos_servicios_contrato_silver",       "midas_datos_servicios_contrato_silver",       "SILVER_VIEW",   52, None),
-    # ADOPTADA: la tabla ya existía y tiene consumidores propios; su schema manda y no
-    # le declaramos DDL. Solo refrescamos su contenido. Mismo criterio que su Bronze.
-    ("midas_datos_detalle_solicitudes_silver",      "midas_datos_detalle_solicitudes_silver",      "SILVER_TABLE_ADOPTADA", 53, None),
+    # (midas_datos_detalle_solicitudes_silver se movió al orden 40: la leen las features)
     ("midas_datos_investigacion_consumo_silver",    "midas_datos_investigacion_consumo_silver",    "SILVER_VIEW",   54, None),
     ("midas_datos_perdidas_no_operacionales_silver","midas_datos_perdidas_no_operacionales_silver","SILVER_VIEW",   55, None),
     # ── Nivel 2: el UNICO objeto que puede filtrar por actividad (I15) — orden 61 ──
@@ -447,6 +459,14 @@ N_ESPERADO_SILVER = len(SEED_SILVER)
 
 # Dependencias REALES entre objetos Silver. Las que solo leen Bronze no tienen padre:
 # su prerequisito es la task anterior del job, no otro objeto Silver.
+#
+# OJO: query_padre_id es UNA columna, asi que aqui cabe UN solo padre por hija, y ademas
+# es INFORMATIVO — lo que de verdad ordena la ejecucion es orden_ejecucion. Por eso una
+# segunda dependencia NO se puede expresar aqui y tiene que vivir en el orden.
+# midas_features_consumo_silver es el caso: lee historial_consumo (declarado abajo) Y
+# midas_datos_detalle_solicitudes_silver para R5. Esa segunda la garantiza el orden 40 vs
+# 43; si alguien reordena el seed y la rompe, R5 vuelve a salir en cero en silencio.
+# El test test_las_dependencias_silver_respetan_el_orden lo vigila.
 _PADRES_SILVER = [
     ("midas_historial_consumo_periodo_silver",  "midas_historial_consumo_silver"),
     ("midas_features_consumo_silver",           "midas_historial_consumo_silver"),
@@ -667,6 +687,44 @@ spark.sql(f"""
            fecha_modificacion = current_timestamp()
      WHERE clave = 'calificacion_medidor_conforme' AND activo = true
 """)
+# ───── Correcciones de VALOR sobre claves que ya existen ─────
+# El MERGE es insert-if-missing: cambiar el valor en _PARAMS NO lo cambia en un ambiente
+# donde la clave ya existe. Cada correccion de valor necesita su UPDATE explicito, igual
+# que las desactivaciones de arriba.
+#
+# Detectado en dllo el 2026-08-11: conceptos_consumo_medido seguia con la lista vieja
+# despues de correr crear_objetos, asi que el 545 nunca entro y el +29% esperado en
+# unidades_consumo_cobradas no ocurrio. El notebook 34 lo dio por OK porque su valor
+# esperado tambien estaba desactualizado: comparaba lo viejo contra lo viejo.
+#
+# El UPDATE va CONDICIONADO al valor viejo exacto. Si negocio ya ajusto la lista por su
+# cuenta, no dispara y su decision se respeta — que es la razon por la que el MERGE no
+# pisa valores. El valor y la descripcion salen de _PARAMS, no se reescriben aqui: una
+# segunda copia del texto es exactamente el drift que este bloque viene a reparar.
+_CORRECCIONES_VALOR = [
+    # (dominio, clave, valor que hay que sustituir)
+    ("cargo", "conceptos_consumo_medido", "87,90,546,550,552"),
+]
+for _dom, _clave, _viejo in _CORRECCIONES_VALOR:
+    _nuevo = next(((v, desc) for (d, k, v, _t, desc, _a) in _PARAMS
+                   if d == _dom and k == _clave), None)
+    if _nuevo is None:
+        raise ValueError(
+            f"_CORRECCIONES_VALOR apunta a {_dom}/{_clave}, que no esta en _PARAMS. "
+            f"Una correccion hacia una clave inexistente no corrige nada."
+        )
+    spark.sql(f"""
+        UPDATE {PARAMETROS}
+           SET valor = {_sql_val(_nuevo[0])},
+               descripcion = {_sql_val(_nuevo[1])},
+               fecha_modificacion = current_timestamp()
+         WHERE dominio = {_sql_val(_dom)}
+           AND clave   = {_sql_val(_clave)}
+           AND valor   = {_sql_val(_viejo)}
+    """)
+    print(f"OK  correccion de valor aplicada si procedia: {_dom}/{_clave} "
+          f"{_viejo!r} -> {_nuevo[0]!r}")
+
 print(f"OK  midas_parametros sembrada ({len(_PARAMS)} parámetros, insert-if-missing; "
       f"{sum(1 for p in _PARAMS if not p[5])} inactivos por PENDIENTE-NEG o deprecacion)")
 

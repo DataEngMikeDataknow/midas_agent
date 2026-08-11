@@ -541,7 +541,11 @@ OBJ_FC = "midas_features_consumo_silver"
 OBJ_CG = "midas_historial_cargos_silver"
 
 # Debe coincidir con el parámetro cargo/conceptos_consumo_medido.
-CONCEPTOS_MEDIDO = [87, 90, 546, 550, 552]
+# CORREGIDO 2026-08-11: estaba en la lista anterior al 2026-08-05 (con 550 y 552, que no
+# existen en los datos, y sin el 545). Aquí el daño era menor que en el notebook 34
+# porque este bloque sigue al parámetro cuando puede leerlo, pero el respaldo cableado
+# tiene que ser el correcto.
+CONCEPTOS_MEDIDO = [87, 90, 545, 546]
 CONCEPTO_SIN_LEGALIZAR = 899
 
 if not (existe(OBJ_FC) and existe(OBJ_CG)):

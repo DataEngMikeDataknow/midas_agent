@@ -55,7 +55,11 @@ def titulo(txt):
 
 # Lo que se esperaba de los cambios de hoy. Escrito aquí para que el notebook sea
 # autocontenido y detecte drift contra el repo.
-CONCEPTOS_MEDIDO = [87, 90, 546, 550, 552]   # cargo/conceptos_consumo_medido
+# CORREGIDO 2026-08-11. Estaba en [87, 90, 546, 550, 552], la lista ANTERIOR al
+# 2026-08-05, así que este notebook comparaba lo viejo contra lo viejo y daba OK sobre
+# un parámetro que nunca se actualizó. Un valor esperado desactualizado no es un chequeo
+# laxo: es un chequeo que afirma lo contrario de la verdad.
+CONCEPTOS_MEDIDO = [87, 90, 545, 546]        # cargo/conceptos_consumo_medido
 CONCEPTO_SIN_LEGALIZAR = 899                 # cargo/concepto_consumo_sin_legalizar
 RETIRADAS_V3 = ["midas_dim_estado_corte_facturable_bronze",
                 "midas_datos_servicios_contrato_bronze"]
@@ -442,7 +446,7 @@ except Exception as e:                                          # noqa: BLE001
 titulo("V4 - Parámetros que gobiernan los cambios de hoy")
 
 ESPERADOS = [
-    ("cargo",     "conceptos_consumo_medido",       "87,90,546,550,552", True),
+    ("cargo",     "conceptos_consumo_medido",       "87,90,545,546",     True),
     ("cargo",     "concepto_consumo_sin_legalizar", "899",               True),
     ("solicitud", "tipo_solicitud_reconexion",      "300",               True),
     ("solicitud", "tipo_solicitud_suspension",      "56",                True),

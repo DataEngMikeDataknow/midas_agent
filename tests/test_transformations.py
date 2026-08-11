@@ -290,10 +290,54 @@ def _seed_silver():
     return [(tabla, key, tipo) for tabla, key, tipo in filas]
 
 
+def _seed_silver_orden():
+    """{tabla_destino: orden_ejecucion} de SEED_SILVER."""
+    texto = (Path(__file__).resolve().parents[1]
+             / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+    ini = texto.index("SEED_SILVER = [")
+    bloque = texto[ini:texto.index("\n]", ini)]
+    filas = re.findall(
+        r'\(\s*"([^"]+)"\s*,\s*"[^"]+"\s*,\s*"SILVER_[A-Z_]+"\s*,\s*(\d+)', bloque)
+    return {tabla: int(orden) for tabla, orden in filas}
+
+
 class TestSeedContraArchivos(unittest.TestCase):
     def test_el_seed_no_esta_vacio(self):
         """Si el regex deja de casar, los demás tests de esta clase pasarían en vacío."""
         self.assertEqual(len(_seed_silver()), 13)
+
+    def test_las_dependencias_silver_respetan_el_orden(self):
+        """REGRESIÓN (dllo, 2026-08-11): `midas_features_consumo_silver` (orden 43) leía
+        `midas_datos_detalle_solicitudes_silver`, que estaba sembrada en el orden 53. Las
+        features se calculaban SIEMPRE contra el contenido de la corrida anterior, y R5
+        publicó `false` en las 3.152 filas con los datos sanos en la tabla.
+
+        No fallaba ni avisaba: un objeto que lee a otro que corre después produce un
+        resultado plausible calculado sobre datos viejos. `query_padre_id` no lo cubre
+        porque admite un solo padre y es informativo; lo único que lo garantiza es
+        orden_ejecucion, y lo único que lo vigila es este test."""
+        ordenes = _seed_silver_orden()
+        self.assertEqual(len(ordenes), 13, "el regex del orden dejó de casar")
+
+        for tabla, _key, tipo in _seed_silver():
+            carpeta = "view" if tipo == "SILVER_VIEW" else "load"
+            ruta = SQL_DIR / carpeta / f"{tabla}.sql"
+            if not ruta.exists():
+                continue
+            sql = ruta.read_text(encoding="utf-8")
+            # Solo lo ejecutable: una referencia dentro de un comentario no es una lectura.
+            sql = "\n".join(l for l in sql.splitlines()
+                            if not l.strip().startswith("--"))
+            referidas = set(re.findall(r"\{catalog\}\.\{schema\}\.(midas_\w+_silver)", sql))
+            for referida in sorted(referidas - {tabla}):
+                if referida not in ordenes:
+                    continue
+                with self.subTest(lee=f"{tabla} -> {referida}"):
+                    self.assertLess(
+                        ordenes[referida], ordenes[tabla],
+                        f"{tabla} (orden {ordenes[tabla]}) lee {referida} "
+                        f"(orden {ordenes[referida]}), que corre DESPUÉS: se calcularía "
+                        f"sobre el contenido de la corrida anterior, sin fallar.")
 
     def test_todo_objeto_sembrado_tiene_su_sql(self):
         for tabla, key, tipo in _seed_silver():
