@@ -823,8 +823,16 @@ for tabla, pk in PK_DECLARADA.items():
     total = df_t.count()
     distintos = df_t.select(*pk).distinct().count()
     unica = total == distintos
-    nulos = df_t.filter(F.greatest(*[F.col(c).isNull().cast("int") for c in pk]) == 1).count() \
-        if pk else 0
+    # "alguna columna de la PK es NULL", con un OR acumulado.
+    #
+    # Antes era `F.greatest(*[...isNull().cast("int")]) == 1`, que exige DOS argumentos
+    # como minimo: con una PK de una sola columna Spark lanza WRONG_NUM_COLUMNS. Y 11 de
+    # las 12 PK declaradas son de una sola columna, asi que reventaba en la primera tabla.
+    # El OR acumulado funciona igual con una que con varias.
+    cond = F.lit(False)
+    for _c in pk:
+        cond = cond | F.col(_c).isNull()
+    nulos = df_t.filter(cond).count() if pk else 0
     chequeo("V8", f"{tabla.replace('midas_datos_', '')} PK={'+'.join(pk)}",
             "OK" if unica else "REVISAR", f"{total} únicos", distintos,
             "duplicados esperados y documentados" if not unica else "")

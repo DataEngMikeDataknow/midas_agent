@@ -155,14 +155,22 @@ else:
         chequeo("V1", "el filtro por concepto cambió el resultado", "OK",
                 obtenido=f"{len(distintos)} totales distintos; actual={actual_t:,.2f}",
                 nota="el salto entre versiones marca la corrida donde entró el filtro")
-        # El total de hoy debe ser el MENOR del historial: el filtro nuevo es mas
-        # restrictivo que el viejo (causal -1 abarcaba el 99% de las lineas).
-        chequeo("V1", "el total actual es el más bajo del historial",
-                "OK" if abs(actual_t - min(distintos)) < 0.01 else "REVISAR",
-                f"{min(distintos):,.2f}", f"{actual_t:,.2f}",
-                nota="" if abs(actual_t - min(distintos)) < 0.01 else
-                     "hay una versión con menos unidades que la actual: revisa si el "
-                     "parámetro cambió entre corridas")
+        # CORREGIDO 2026-08-11. Aqui habia una expectativa cableada e INVERTIDA: "el total
+        # de hoy debe ser el MENOR del historial". Era cierta para el cambio del 08-03
+        # (causal -1 -> filtro por concepto, mas restrictivo, BAJA el total) y dejo de
+        # serlo con el del 08-05: la entrada del concepto 545 SUBE el total. Un valor
+        # esperado que solo vale para la ultima transicion desplegada no es un chequeo,
+        # es una trampa — la misma clase de defecto que hizo que CONCEPTOS_MEDIDO diera
+        # OK sobre un parametro que nunca se habia actualizado.
+        #
+        # Se reporta la serie; el juicio es de quien lee, porque depende de QUE cambio
+        # se acaba de desplegar.
+        menor, mayor = min(distintos), max(distintos)
+        chequeo("V1", "rango de unidades en el historial legible", "OK",
+                obtenido=f"min={menor:,.2f}  max={mayor:,.2f}  actual={actual_t:,.2f}",
+                nota="pasar de causal a concepto BAJA el total; la entrada del 545 lo "
+                     "SUBE. Contrasta el salto contra el cambio que se desplego, y ten "
+                     "presente que una extraccion nueva mueve el total por su cuenta.")
 
 # COMMAND ----------
 titulo("V1 - El 899 va aparte y no está mezclado")
