@@ -68,9 +68,9 @@ CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_features_consumo_silver (
     desviacion_vs_promedio_pct       DOUBLE COMMENT 'R6. Desviacion del consumo del periodo contra ese promedio.',
 
     -- ── Regla 7 · Casos 11/15 · precedente historico (refuerzo) ──
-    tuvo_consumo_alto_historico  BOOLEAN COMMENT 'R7. El servicio YA tuvo consumos por encima del limite superior en algun periodo ANTERIOR. Negocio reencuadro esto el 2026-08-05: la ''tolerancia'' no es un porcentaje sobre el limite de este periodo, es PRECEDENTE del propio servicio. Es REFUERZO de la decision, no su reemplazo. NULL cuando ningun periodo previo tenia limite usable: el 29,7% de las filas no lo tiene, y ahi ''no tuvo'' seria un negativo fabricado.',
+    tuvo_consumo_alto_historico  BOOLEAN COMMENT 'R7. El servicio YA tuvo consumos por encima del limite superior en algun periodo ANTERIOR. Negocio reencuadro esto el 2026-08-05: la \'tolerancia\' no es un porcentaje sobre el limite de este periodo, es PRECEDENTE del propio servicio. Es REFUERZO de la decision, no su reemplazo. NULL cuando ningun periodo previo tenia limite usable: el 29,7% de las filas no lo tiene, y ahi \'no tuvo\' seria un negativo fabricado.',
     n_periodos_previos_con_limite BIGINT COMMENT 'R7. Cuantos periodos previos tenian limite superior mayor que cero. Publicado para que se sepa sobre cuanta historia se evaluo el precedente; con 0, tuvo_consumo_alto_historico es NULL por construccion.',
-    limite_superior              DOUBLE  COMMENT 'R7. Limite superior del periodo (lectelme.leemlisu). Es SENAL, nunca regla de decision. Nulo o cero en el 29,7% de las filas. OJO: el limite INFERIOR suele ser cero, asi que ''dentro de limites'' por si solo no discrimina nada.',
+    limite_superior              DOUBLE  COMMENT 'R7. Limite superior del periodo (lectelme.leemlisu). Es SENAL, nunca regla de decision. Nulo o cero en el 29,7% de las filas. OJO: el limite INFERIOR suele ser cero, asi que \'dentro de limites\' por si solo no discrimina nada.',
     consumo_supera_limite_actual BOOLEAN COMMENT 'R7. El consumo de ESTE periodo supera su limite superior. Distinto de tuvo_consumo_alto_historico, que mira el pasado. El agente los combina: superar el limite teniendo precedente pesa distinto que superarlo por primera vez.',
 
     -- ── Regla 8 · Casos 5/11/15 · investigacion ──

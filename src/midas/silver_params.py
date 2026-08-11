@@ -55,8 +55,10 @@ def sql_desnudo(sql: str) -> str:
     sin_comentarios = "\n".join(
         l for l in sql.splitlines() if not l.strip().startswith("--")
     )
-    # '' es la comilla escapada dentro de un literal: se consume junto con el literal.
-    return re.sub(r"'(?:[^']|'')*'", "''", sin_comentarios)
+    # \' es la comilla escapada dentro de un literal (Spark escapa con backslash, no
+    # duplicando): se consume junto con el literal, igual que \\. Un '' suelto queda
+    # como lo que realmente es en Spark, la cadena vacia.
+    return re.sub(r"'(?:[^'\\]|\\.)*'", "''", sin_comentarios)
 
 
 def _literal_sql(valor: str, tipo_dato: str, clave: str) -> str:
@@ -113,7 +115,12 @@ def _literal_sql(valor: str, tipo_dato: str, clave: str) -> str:
             f"pero su valor {texto!r} no es booleano."
         )
     # STRING y cualquier otro: se escapa la comilla simple y se comilla.
-    return "'" + texto.replace("'", "''") + "'"
+    #
+    # Con BACKSLASH, no duplicando: Spark no soporta el '' del estandar SQL
+    # (SPARK-20837), lo lexa como dos literales adyacentes. Y el backslash va
+    # primero, porque si no un valor terminado en \ se comeria la comilla de cierre
+    # y dejaria la sentencia abierta — la inyeccion que esta funcion debe impedir.
+    return "'" + texto.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def cargar_parametros(spark, catalog: str, schema: str) -> Dict[str, str]:

@@ -192,14 +192,27 @@ for tabla, columnas in _MIGRACION_V3.items():
 def _sql_val(x):
     """Literal SQL seguro. Definido AQUI y no mas abajo porque la migracion de Silver
     (la primera celda que lo usa) corre antes que el bootstrap del control: en un
-    notebook las celdas se ejecutan en orden."""
+    notebook las celdas se ejecutan en orden.
+
+    El escape es con BACKSLASH, no duplicando la comilla. Spark NO soporta el ''
+    del estandar SQL (SPARK-20837, resuelto como Incomplete): lo lexa como DOS
+    literales adyacentes. En un VALUES eso pasa desapercibido porque los concatena,
+    y por eso el MERGE de parametros venia "funcionando" con descripciones como
+    "Causal 'sin novedad'". Pero un COMMENT admite UN solo token string, asi que el
+    segundo literal queda suelto: PARSE_SYNTAX_ERROR at or near ''tolerancia''
+    (dllo, 2026-08-11, ALTER TABLE ADD COLUMNS de las columnas de R7).
+
+    El backslash se escapa PRIMERO y aparte: sin eso un valor terminado en \\ se
+    comeria la comilla de cierre, que es exactamente el agujero que este helper existe
+    para tapar.
+    """
     if x is None:
         return "NULL"
     if isinstance(x, bool):          # antes que int: bool ES subclase de int
         return "true" if x else "false"
     if isinstance(x, int):
         return str(x)
-    return "'" + str(x).replace("'", "''") + "'"
+    return "'" + str(x).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 # (columna, tipo, comentario). El comentario NO es opcional: `ALTER TABLE ADD COLUMNS`

@@ -193,8 +193,16 @@ class TestParametros(unittest.TestCase):
                     _literal_sql(veneno, "INT_LIST", "conceptos_consumo_medido")
 
     def test_escapa_las_cadenas(self):
+        """REGRESIÓN (dllo, 2026-08-11): el escape era `''`, el del estándar SQL, que
+        Spark NO soporta (SPARK-20837) — lo lexa como dos literales adyacentes. En un
+        VALUES los concatena y no se nota; en un COMMENT, que admite un solo token
+        string, revienta con PARSE_SYNTAX_ERROR."""
         self.assertEqual(_literal_sql("PR", "STRING", "t"), "'PR'")
-        self.assertEqual(_literal_sql("O'Brien", "STRING", "t"), "'O''Brien'")
+        self.assertEqual(_literal_sql("O'Brien", "STRING", "t"), "'O\\'Brien'")
+        # El backslash se escapa aparte: sin esto un valor terminado en `\` se comería
+        # la comilla de cierre y dejaría la sentencia abierta a inyección.
+        self.assertEqual(_literal_sql("C:\\tmp", "STRING", "t"), "'C:\\\\tmp'")
+        self.assertEqual(_literal_sql("fin\\", "STRING", "t"), "'fin\\\\'")
 
     def test_resolver_falla_con_placeholder_desconocido(self):
         with self.assertRaises(KeyError) as ctx:
@@ -376,12 +384,35 @@ class TestSeedContraArchivos(unittest.TestCase):
                 with self.subTest(tabla=tabla, columna=col):
                     self.assertTrue(comentario.strip(), "el comentario no puede ir vacío")
                     # El DDL escribe COMMENT 'texto'; se compara el texto exacto.
-                    esperado = re.search(rf"^\s+{col}\s+\w+\s+COMMENT\s+'(.*?)',?$",
-                                         ddl, re.M | re.S)
+                    # El literal se consume respetando el escape de Spark (backslash),
+                    # para que un \' de dentro no corte la captura antes de tiempo.
+                    esperado = re.search(
+                        rf"^\s+{col}\s+\w+\s+COMMENT\s+'((?:[^'\\]|\\.)*)',?$",
+                        ddl, re.M | re.S)
                     self.assertIsNotNone(esperado, f"{col} no está en el DDL con COMMENT")
-                    self.assertEqual(comentario, esperado.group(1).replace("''", "'"),
+                    # Regla de Spark: \<char> -> <char>. Cubre \' y \\ de una vez.
+                    self.assertEqual(comentario,
+                                     re.sub(r"\\(.)", r"\1", esperado.group(1)),
                                      f"{col}: el comentario de la migración y el del DDL "
                                      f"se separaron")
+
+    def test_ningun_sql_escapa_comillas_duplicandolas(self):
+        """REGRESIÓN (dllo, 2026-08-11): `''` es el escape del estándar SQL, NO el de
+        Spark (SPARK-20837). Spark lo lexa como dos literales adyacentes: en un VALUES
+        los concatena y el error queda invisible, pero en un `COMMENT`, que admite un
+        solo token string, tumba la sentencia con PARSE_SYNTAX_ERROR. En Spark el
+        escape es `\\'`, y `''` es literalmente la cadena vacía — que este modelo no
+        usa en ninguna parte, así que su sola presencia delata la confusión."""
+        for ruta in SQL_DIR.rglob("*.sql"):
+            ejecutable = "\n".join(
+                l for l in ruta.read_text(encoding="utf-8").splitlines()
+                if not l.strip().startswith("--")
+            )
+            with self.subTest(ruta=ruta.name):
+                self.assertNotIn(
+                    "''", ejecutable,
+                    f"{ruta.name}: usa '' para escapar una comilla. Spark escapa con "
+                    f"backslash (\\'); el '' rompe cualquier COMMENT que lo contenga.")
 
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""
