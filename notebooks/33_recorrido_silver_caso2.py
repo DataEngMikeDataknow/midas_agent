@@ -77,19 +77,19 @@ MAPA = [
      "7 de las 8 reglas duras del Caso 2, como MEDIDAS."),
     ("midas_datos_servicios_contrato_silver", "Nivel 1", "vista", "servicio suscrito",
      "Roster por contrato: los servicios hermanos."),
-    ("midas_datos_detalle_solicitudes_silver", "Nivel 1", "tabla ADOPTADA", "solicitud",
+    ("midas_datos_detalle_solicitudes_c2_silver", "Nivel 1", "tabla ADOPTADA", "solicitud",
      "Trámites. Tabla preexistente: su schema manda, solo refrescamos contenido."),
     ("midas_datos_investigacion_consumo_silver", "Nivel 1", "vista", "SS+periodo+tipo",
      "Investigaciones. El estado va CRUDO a propósito."),
     ("midas_datos_perdidas_no_operacionales_silver", "Nivel 1", "vista", "expediente PNO",
      "El EXPEDIENTE de la pérdida. La DETECCIÓN vive en es_pno de cargos."),
-    ("midas_datos_basicos_producto_silver", "Legacy", "tabla", "servicio suscrito",
+    ("midas_datos_basicos_producto_c2_silver", "Legacy", "tabla", "servicio suscrito",
      "Caso 1. SQL verbatim, patrón intacto."),
-    ("midas_ordenes_calidad_pendientes_silver", "Legacy", "tabla", "orden",
+    ("midas_ordenes_calidad_pendientes_c2_silver", "Legacy", "tabla", "orden",
      "Caso 1 + 2 columnas aditivas de corte facturable."),
-    ("midas_historial_critica_silver", "Legacy", "tabla", "orden de crítica",
+    ("midas_historial_critica_c2_silver", "Legacy", "tabla", "orden de crítica",
      "Caso 1. OJO: su contenido cambió con la rama 4 de la v3."),
-    ("midas_historial_facturacion_silver", "Legacy", "tabla", "cuenta de cobro",
+    ("midas_historial_facturacion_c2_silver", "Legacy", "tabla", "cuenta de cobro",
      "Caso 1. SQL verbatim."),
 ]
 
@@ -149,7 +149,7 @@ for c in ["n_medidores_periodo", "consumo_calculado_negativo", "desviacion_vs_pr
 # MAGIC ## D2 — Lecturas es la espina dorsal, no consumos
 # MAGIC
 # MAGIC El plan original pedía `lecturas ⋈ consumos` al grano de medidor. **No era
-# MAGIC posible**: `midas_datos_consumos_producto_bronze` no proyecta el medidor
+# MAGIC posible**: `midas_datos_consumos_producto_c2_bronze` no proyecta el medidor
 # MAGIC (`cosselme` solo aparece en el `ORDER BY`), y aunque se agregara, `lecturas.medidor`
 # MAGIC es `elmecodi` mientras `cosselme` es `elmeidem` — no son joinables.
 # MAGIC
@@ -382,7 +382,7 @@ display(n2.select("id_orden", "servicio_suscrito", "fecha_creacion", "actividad"
 # COMMAND ----------
 titulo("D10 - La tabla adoptada y su contrato")
 
-ADOPTADA = "midas_datos_detalle_solicitudes_silver"
+ADOPTADA = "midas_datos_detalle_solicitudes_c2_silver"
 ds = tabla(ADOPTADA)
 ESPERADAS = ["servicio_suscrito", "id_solicitud", "usuario", "tipo_solicitud",
              "fecha_solicitud", "estado_solicitud", "fecha_atencion_solicitud",
@@ -482,7 +482,7 @@ display(fc.select("servicio_suscrito", "id_periodo_consumo", "tipo_consumo_cod",
 # MAGIC `MANAGE`: el error nunca fue de permisos, y el pipeline ya sobrescribe otras cuatro
 # MAGIC tablas del mismo autor sin problema.
 # MAGIC
-# MAGIC ### P4 — `Falta .../view/midas_datos_detalle_solicitudes_silver.sql`
+# MAGIC ### P4 — `Falta .../view/midas_datos_detalle_solicitudes_c2_silver.sql`
 # MAGIC
 # MAGIC **Causa:** el `tipo_carga` cambió en el código pero **el control seguía con el valor
 # MAGIC viejo**, porque se reparó solo `bronze_to_silver` sin re-ejecutar `crear_objetos`.
@@ -664,8 +664,8 @@ display(spark.sql(f"""
     SELECT table_name, created, created_by, last_altered
       FROM {CATALOG}.information_schema.tables
      WHERE table_schema = '{SCHEMA}'
-       AND table_name IN ('midas_datos_detalle_solicitudes_bronze',
-                          'midas_datos_detalle_solicitudes_silver')
+       AND table_name IN ('midas_datos_detalle_solicitudes_c2_bronze',
+                          'midas_datos_detalle_solicitudes_c2_silver')
 """))
 print("  Si last_altered de la _silver no coincide con la última corrida de midas_silver,")
 print("  hay otro proceso escribiéndola. Dos pipelines sobre el mismo objeto es un")

@@ -23,16 +23,16 @@ log = logging.getLogger(__name__)
 
 # Mapeo tabla -> (query_key, nombre_parquet) para enriquecer el log.
 _QUERY_KEY = {
-    "midas_ordenes_calidad_pendientes_bronze":   "QUERY_ORDENES_PENDIENTES",
-    "midas_datos_basicos_producto_bronze":       "QUERY_DATOS_BASICOS",
-    "midas_datos_lecturas_producto_bronze":      "QUERY_DATOS_LECTURA",
-    "midas_datos_consumos_producto_bronze":      "QUERY_DATOS_CONSUMOS",
-    "midas_datos_ordenes_previa_critica_bronze": "QUERY_ORDENES_CRITICA_PEVIA",
-    "midas_datos_cometarios_ordenes_bronze":     "QUERY_COMENTARIOS_ORDENES",
-    "midas_datos_cuentas_cobro_bronze":          "QUERY_CUENTAS_COBRO",
-    "midas_datos_detalle_cargos_bronze":         "QUERY_DETALLE_CARGOS",
+    "midas_ordenes_calidad_pendientes_c2_bronze":   "QUERY_ORDENES_PENDIENTES",
+    "midas_datos_basicos_producto_c2_bronze":       "QUERY_DATOS_BASICOS",
+    "midas_datos_lecturas_producto_c2_bronze":      "QUERY_DATOS_LECTURA",
+    "midas_datos_consumos_producto_c2_bronze":      "QUERY_DATOS_CONSUMOS",
+    "midas_datos_ordenes_previa_critica_c2_bronze": "QUERY_ORDENES_CRITICA_PEVIA",
+    "midas_datos_cometarios_ordenes_c2_bronze":     "QUERY_COMENTARIOS_ORDENES",
+    "midas_datos_cuentas_cobro_c2_bronze":          "QUERY_CUENTAS_COBRO",
+    "midas_datos_detalle_cargos_c2_bronze":         "QUERY_DETALLE_CARGOS",
     # ─── Caso 2: promociones ───
-    "midas_datos_detalle_solicitudes_bronze":    "QUERY_DETALLE_SOLICITUDES",
+    "midas_datos_detalle_solicitudes_c2_bronze":    "QUERY_DETALLE_SOLICITUDES",
     "midas_datos_consumos_contrato_bronze":      "QUERY_CONSUMOS_CONTRATO",
     "midas_datos_investigacion_consumo_bronze":  "QUERY_INVESTIGACION_CONSUMO",
     # ─── v3 R4: Perdidas No Operacionales ───
@@ -88,7 +88,7 @@ def build_tables_config(source_volume_path: str) -> list:
     primary_key acepta str (una columna) o list (PK compuesta)."""
     return [
         {
-            "name": "midas_ordenes_calidad_pendientes_bronze",
+            "name": "midas_ordenes_calidad_pendientes_c2_bronze",
             "path": f"{source_volume_path}/ordenes_calidad_pendientes.parquet",
             "primary_key": "id_orden",
             "description": "Información de órdenes de calidad pendientes.",
@@ -97,7 +97,7 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_basicos_producto_bronze",
+            "name": "midas_datos_basicos_producto_c2_bronze",
             "path": f"{source_volume_path}/datos_basicos_producto.parquet",
             "primary_key": "servicio_suscrito",
             "description": "Información básica del producto.",
@@ -107,7 +107,7 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_lecturas_producto_bronze",
+            "name": "midas_datos_lecturas_producto_c2_bronze",
             "path": f"{source_volume_path}/datos_lecturas_producto.parquet",
             "primary_key": "servicio_suscrito",
             "description": "Lecturas del medidor.",
@@ -118,7 +118,7 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_consumos_producto_bronze",
+            "name": "midas_datos_consumos_producto_c2_bronze",
             "path": f"{source_volume_path}/datos_consumos_producto.parquet",
             "primary_key": "servicio_suscrito",
             "description": "Consumos facturados.",
@@ -128,7 +128,7 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_ordenes_previa_critica_bronze",
+            "name": "midas_datos_ordenes_previa_critica_c2_bronze",
             "path": f"{source_volume_path}/datos_ordenes_previa_critica.parquet",
             "primary_key": "id_orden",
             "description": "Órdenes de crítica y previa. Incluye la orden de decisión del analista (activity 7400027).",
@@ -140,13 +140,13 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_cometarios_ordenes_bronze",
+            "name": "midas_datos_cometarios_ordenes_c2_bronze",
             "path": f"{source_volume_path}/datos_comentarios_ordenes.parquet",
             "primary_key": "id_orden",
             "description": "Comentarios de órdenes."
         },
         {
-            "name": "midas_datos_cuentas_cobro_bronze",
+            "name": "midas_datos_cuentas_cobro_c2_bronze",
             "path": f"{source_volume_path}/datos_cuentas_cobro.parquet",
             "primary_key": "id_cuenta_cobro",
             "description": "Cuentas de cobro.",
@@ -157,7 +157,7 @@ def build_tables_config(source_volume_path: str) -> list:
             ]
         },
         {
-            "name": "midas_datos_detalle_cargos_bronze",
+            "name": "midas_datos_detalle_cargos_c2_bronze",
             "path": f"{source_volume_path}/datos_detalle_cargos.parquet",
             "primary_key": "id_cuenta_cobro",
             "description": "Detalle de cargos.",
@@ -173,7 +173,7 @@ def build_tables_config(source_volume_path: str) -> list:
             # Bronze PREEXISTENTE que se ADOPTA (negocio: "se va a usar"). Su schema tiene
             # nombres en español + servicio_suscrito como 1ª columna; el mapeo posicional lo
             # hace processing._adaptar_solicitudes_a_bronze (validado en dllo, celda F2).
-            "name": "midas_datos_detalle_solicitudes_bronze",
+            "name": "midas_datos_detalle_solicitudes_c2_bronze",
             "path": f"{source_volume_path}/datos_detalle_solicitudes.parquet",
             "primary_key": ["servicio_suscrito", "id_solicitud"],
             "description": "Solicitudes/paquetes por servicio suscrito (mo_packages)."
@@ -211,7 +211,7 @@ def build_tables_config(source_volume_path: str) -> list:
                 {"column": "servicio_suscrito", "comment": "FM_POSSIBLE_NTL.NORMALIZED_PROD_ID. PENDIENTE-NEG: confirmar contra datos que equivale al SS."},
                 {"column": "estado_pno", "comment": "FM_POSSIBLE_NTL.STATUS, CRUDO. PENDIENTE-NEG: si tiene catalogo, resolver inline (I11)."},
                 {"column": "tipo_irregularidad", "comment": "codigo-descripcion desde FM_IRREGULARITY_TYPE (outer join: null si no parametrizada)."},
-                {"column": "id_solicitud", "comment": "FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_bronze.id_solicitud."},
+                {"column": "id_solicitud", "comment": "FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_c2_bronze.id_solicitud."},
                 {"column": "fecha_inicio_fraude", "comment": "Inicio de la ventana defraudada. Texto YYYY-MM-DD."},
                 {"column": "fecha_fin_fraude", "comment": "Fin de la ventana defraudada. Texto YYYY-MM-DD."},
                 {"column": "comentario", "comment": "FM_POSSIBLE_NTL.COMMENT_. Probable CLOB: database.py lo convierte a str (I10)."}

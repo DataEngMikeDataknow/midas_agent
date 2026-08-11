@@ -227,11 +227,11 @@ def _ints_col(df_pd, col):
     return out
 
 
-BASICOS  = "midas_datos_basicos_producto_bronze"
-ORDENES  = "midas_ordenes_calidad_pendientes_bronze"
-LECTURAS = "midas_datos_lecturas_producto_bronze"
-CONSUMOS = "midas_datos_consumos_producto_bronze"
-CARGOS   = "midas_datos_detalle_cargos_bronze"
+BASICOS  = "midas_datos_basicos_producto_c2_bronze"
+ORDENES  = "midas_ordenes_calidad_pendientes_c2_bronze"
+LECTURAS = "midas_datos_lecturas_producto_c2_bronze"
+CONSUMOS = "midas_datos_consumos_producto_c2_bronze"
+CARGOS   = "midas_datos_detalle_cargos_c2_bronze"
 
 anchor_contratos_multi = []
 anchor_ss = []
@@ -361,8 +361,8 @@ try:
     """)
     show(dist, "Distribucion de package_type en la ventana:")
 
-    existe_bronze = bronze_exists("midas_datos_detalle_solicitudes_bronze")
-    print("Bronze midas_datos_detalle_solicitudes_bronze existe:", existe_bronze)
+    existe_bronze = bronze_exists("midas_datos_detalle_solicitudes_c2_bronze")
+    print("Bronze midas_datos_detalle_solicitudes_c2_bronze existe:", existe_bronze)
 
     # --- Veredicto explicando el vacio anterior ---
     if len(detalle) > 0:

@@ -386,7 +386,7 @@ def run_query_detalle_solicitudes(df_datos_basicos: pd.DataFrame) -> pd.DataFram
     return df_detalle_solicitudes_final
 
 
-# Mapeo al schema de la Bronze EXISTENTE `midas_datos_detalle_solicitudes_bronze`
+# Mapeo al schema de la Bronze EXISTENTE `midas_datos_detalle_solicitudes_c2_bronze`
 # (validado en dllo 21-22 jul 2026, celda F2 de 30_validacion_midas.py). La tabla ya existe con
 # nombres en español y `servicio_suscrito` como primera columna; negocio confirmó que SE USA,
 # así que se ADOPTA (no se recrea). El renombrado va aquí, en la capa Python: NO se modifica

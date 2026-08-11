@@ -58,5 +58,5 @@ SELECT
     saldo_pendiente,
     cuentas_vencidas,
     COUNT(*) OVER (PARTITION BY contrato)                           AS n_servicios_contrato
-FROM {catalog}.{schema}.midas_datos_basicos_producto_silver
+FROM {catalog}.{schema}.midas_datos_basicos_producto_c2_silver
 WHERE contrato IS NOT NULL

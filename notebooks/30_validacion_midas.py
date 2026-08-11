@@ -5,7 +5,7 @@
 # MAGIC dllo**, antes de dar por cerrada la Fase 2:
 # MAGIC 1. **F5** — la query de entrada NO filtra por actividad → las órdenes 993 (Caso 2) ya
 # MAGIC    entran a Bronze junto con las 1019 (Caso 1). Se cuenta por actividad.
-# MAGIC 2. **F2 (D3)** — schema de la Bronze huérfana `midas_datos_detalle_solicitudes_bronze`
+# MAGIC 2. **F2 (D3)** — schema de la Bronze huérfana `midas_datos_detalle_solicitudes_c2_bronze`
 # MAGIC    vs el output real de `QUERY_DETALLE_SOLICITUDES` (para decidir adoptar vs recrear).
 # MAGIC 3. **F4** — formato de `consumption_period` de `PE_INVEST_CONSUM` vs los periodos de las
 # MAGIC    Bronze actuales (para saber si se puede unir por periodo o solo por SS).
@@ -94,7 +94,7 @@ def resultado(idc, veredicto, detalle):
 
 # COMMAND ----------
 try:
-    tbl = bronze("midas_ordenes_calidad_pendientes_bronze")
+    tbl = bronze("midas_ordenes_calidad_pendientes_c2_bronze")
     if not spark.catalog.tableExists(tbl):
         resultado("F5", "NO_ENCONTRADO", f"no existe {tbl} (¿ya corrió la cadena en dllo?)")
     else:
@@ -122,7 +122,7 @@ except Exception as e:
 
 # COMMAND ----------
 try:
-    solic = bronze("midas_datos_detalle_solicitudes_bronze")
+    solic = bronze("midas_datos_detalle_solicitudes_c2_bronze")
     existe = spark.catalog.tableExists(solic)
     print("Bronze de solicitudes existe:", existe)
 
@@ -166,7 +166,7 @@ except Exception as e:
 
 # COMMAND ----------
 try:
-    cons = bronze("midas_datos_consumos_producto_bronze")
+    cons = bronze("midas_datos_consumos_producto_c2_bronze")
     if not spark.catalog.tableExists(cons):
         resultado("F4", "REVISAR", f"no existe {cons}; correr la cadena primero.")
     else:

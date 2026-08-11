@@ -68,14 +68,14 @@ display(spark.sql(f"""
 
 # COMMAND ----------
 TABLAS = [
-    "midas_ordenes_calidad_pendientes_bronze",
-    "midas_datos_basicos_producto_bronze",
-    "midas_datos_lecturas_producto_bronze",
-    "midas_datos_consumos_producto_bronze",
-    "midas_datos_ordenes_previa_critica_bronze",
-    "midas_datos_cometarios_ordenes_bronze",
-    "midas_datos_cuentas_cobro_bronze",
-    "midas_datos_detalle_cargos_bronze",
+    "midas_ordenes_calidad_pendientes_c2_bronze",
+    "midas_datos_basicos_producto_c2_bronze",
+    "midas_datos_lecturas_producto_c2_bronze",
+    "midas_datos_consumos_producto_c2_bronze",
+    "midas_datos_ordenes_previa_critica_c2_bronze",
+    "midas_datos_cometarios_ordenes_c2_bronze",
+    "midas_datos_cuentas_cobro_c2_bronze",
+    "midas_datos_detalle_cargos_c2_bronze",
 ]
 for t in TABLAS:
     try:

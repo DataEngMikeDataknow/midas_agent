@@ -34,19 +34,19 @@ log = logging.getLogger(__name__)
 
 # (tabla_destino, query_key) de cada paso de la cadena.
 # query_key debe coincidir con la columna query_key del seed de control.
-PASO_ORDENES_PENDIENTES  = ("midas_ordenes_calidad_pendientes_bronze",   "QUERY_ORDENES_PENDIENTES")
-PASO_DATOS_BASICOS       = ("midas_datos_basicos_producto_bronze",       "QUERY_DATOS_BASICOS")
-PASO_LECTURAS            = ("midas_datos_lecturas_producto_bronze",      "QUERY_DATOS_LECTURA")
-PASO_CONSUMOS            = ("midas_datos_consumos_producto_bronze",      "QUERY_DATOS_CONSUMOS")
-PASO_ORDENES_CRITICA     = ("midas_datos_ordenes_previa_critica_bronze", "QUERY_ORDENES_CRITICA_PEVIA")
-PASO_COMENTARIOS         = ("midas_datos_cometarios_ordenes_bronze",     "QUERY_COMENTARIOS_ORDENES")
-PASO_CUENTAS_COBRO       = ("midas_datos_cuentas_cobro_bronze",          "QUERY_CUENTAS_COBRO")
-PASO_DETALLE_CARGOS      = ("midas_datos_detalle_cargos_bronze",         "QUERY_DETALLE_CARGOS")
+PASO_ORDENES_PENDIENTES  = ("midas_ordenes_calidad_pendientes_c2_bronze",   "QUERY_ORDENES_PENDIENTES")
+PASO_DATOS_BASICOS       = ("midas_datos_basicos_producto_c2_bronze",       "QUERY_DATOS_BASICOS")
+PASO_LECTURAS            = ("midas_datos_lecturas_producto_c2_bronze",      "QUERY_DATOS_LECTURA")
+PASO_CONSUMOS            = ("midas_datos_consumos_producto_c2_bronze",      "QUERY_DATOS_CONSUMOS")
+PASO_ORDENES_CRITICA     = ("midas_datos_ordenes_previa_critica_c2_bronze", "QUERY_ORDENES_CRITICA_PEVIA")
+PASO_COMENTARIOS         = ("midas_datos_cometarios_ordenes_c2_bronze",     "QUERY_COMENTARIOS_ORDENES")
+PASO_CUENTAS_COBRO       = ("midas_datos_cuentas_cobro_c2_bronze",          "QUERY_CUENTAS_COBRO")
+PASO_DETALLE_CARGOS      = ("midas_datos_detalle_cargos_c2_bronze",         "QUERY_DETALLE_CARGOS")
 
 # ─── v3 R1: NO hay pasos de dimension. Ninguna. Invariante I11. ───
 
 # ─── Caso 2: promociones a la cadena ───
-PASO_SOLICITUDES        = ("midas_datos_detalle_solicitudes_bronze",  "QUERY_DETALLE_SOLICITUDES")
+PASO_SOLICITUDES        = ("midas_datos_detalle_solicitudes_c2_bronze",  "QUERY_DETALLE_SOLICITUDES")
 PASO_CONSUMOS_CONTRATO  = ("midas_datos_consumos_contrato_bronze",    "QUERY_CONSUMOS_CONTRATO")
 PASO_INVESTIGACION      = ("midas_datos_investigacion_consumo_bronze", "QUERY_INVESTIGACION_CONSUMO")
 

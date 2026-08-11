@@ -1,5 +1,5 @@
 -- =============================================================================
--- midas_ordenes_calidad_pendientes_silver
+-- midas_ordenes_calidad_pendientes_c2_silver
 --
 -- LEGACY del Caso 1 (actividad 1019). Se orquesta y se loguea como el resto de la
 -- capa, pero CONSERVA su patron `CREATE OR REPLACE TABLE`: cambiarlo no es de este
@@ -17,7 +17,7 @@
 -- aparte que la v3 elimino: ahora la resuelve inline la propia query de Bronze (I11).
 -- =============================================================================
 
-CREATE OR REPLACE TABLE midas_ordenes_calidad_pendientes_silver
+CREATE OR REPLACE TABLE {catalog}.{schema}.midas_ordenes_calidad_pendientes_c2_silver
             AS
             SELECT
                 o.*,
@@ -38,6 +38,6 @@ CREATE OR REPLACE TABLE midas_ordenes_calidad_pendientes_silver
                 p.saldo_vencido,
                 p.estado_corte_facturable,
                 p.estado_corte_facturable_desc
-            FROM midas_ordenes_calidad_pendientes_bronze AS o
-            LEFT JOIN midas_datos_basicos_producto_bronze AS p
+            FROM {catalog}.{schema}.midas_ordenes_calidad_pendientes_c2_bronze AS o
+            LEFT JOIN {catalog}.{schema}.midas_datos_basicos_producto_c2_bronze AS p
                 ON o.servicio_suscrito = p.servicio_suscrito

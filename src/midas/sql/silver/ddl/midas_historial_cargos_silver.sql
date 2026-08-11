@@ -3,7 +3,7 @@
 --
 -- GRANO: la linea de cargo individual.
 --
--- SIN PRIMARY KEY, a proposito. `midas_datos_detalle_cargos_bronze` no tiene llave
+-- SIN PRIMARY KEY, a proposito. `midas_datos_detalle_cargos_c2_bronze` no tiene llave
 -- natural en FLEX tal como se extrae: en dllo son 21.844 filas para 4.480 cuentas, y
 -- ninguna combinacion de las columnas disponibles resulto unica. Declarar una PK que
 -- los datos no cumplen seria peor que no declararla — es exactamente la deuda que ya

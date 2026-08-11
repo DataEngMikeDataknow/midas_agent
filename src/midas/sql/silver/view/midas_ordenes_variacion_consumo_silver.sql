@@ -78,5 +78,5 @@ SELECT
     saldo_pendiente,
     cuentas_vencidas,
     saldo_vencido
-FROM {catalog}.{schema}.midas_ordenes_calidad_pendientes_silver
+FROM {catalog}.{schema}.midas_ordenes_calidad_pendientes_c2_silver
 WHERE CAST(REGEXP_EXTRACT(actividad, '^\\s*(-?[0-9]+)', 1) AS INT) = {p_actividad_variacion_consumo}

@@ -389,7 +389,7 @@ titulo("V3 - ¿Alguien más escribe la tabla ADOPTADA?")
 # DESCRIBE HISTORY trae la columna `userName`: dice QUIÉN escribió, no solo cuándo. Es
 # la respuesta directa a la pregunta abierta desde el 31 de julio, y mucho mejor que
 # comparar last_altered (que ni siquiera registra escrituras de datos).
-ADOPTADA = "midas_datos_detalle_solicitudes_silver"
+ADOPTADA = "midas_datos_detalle_solicitudes_c2_silver"
 try:
     h = (spark.sql(f"DESCRIBE HISTORY {PREFIJO}.{ADOPTADA}")
               .select("version", "timestamp", "operation", "userName")

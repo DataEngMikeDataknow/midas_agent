@@ -131,7 +131,7 @@ especificación. `n_periodos_usados_en_promedio` se publica para que el cálculo
 
 Sobre Bronze, **sin filtros**, con columnas explícitas (nunca `SELECT *`). Existen para que ningún
 consumidor toque Bronze. Tres son vistas con comentario por columna; la cuarta
-(`detalle_solicitudes`) es una **tabla adoptada** y se rige por otras reglas — ver abajo.
+(`detalle_solicitudes`) es una tabla — ver abajo.
 
 | Vista | Grano | Nota |
 |---|---|---|
@@ -139,25 +139,25 @@ consumidor toque Bronze. Tres son vistas con comentario por columna; la cuarta
 | `midas_datos_investigacion_consumo_silver` | (SS, periodo, tipo) | El estado va **crudo** |
 | `midas_datos_perdidas_no_operacionales_silver` | expediente PNO | Sin ventana temporal |
 
-### `midas_datos_detalle_solicitudes_silver` · **tabla adoptada** · grano: solicitud
+### `midas_datos_detalle_solicitudes_c2_silver` · grano: solicitud
 
-Trámites radicados. Es el único objeto de la capa que **no definimos nosotros**: la tabla ya
-existía, tiene consumidores propios, y **su schema manda**. Nuestro pipeline solo refresca su
-contenido desde Bronze — 11 columnas, reflejo 1:1 de su Bronze, que también fue adoptada en su
-momento por la misma razón.
+Trámites radicados. 11 columnas, reflejo 1:1 de su Bronze.
 
-Consecuencias de adoptarla, que importan a quien la consuma:
-- **No tiene `tipo_solicitud_cod`.** Esa derivación era nuestra cuando el objeto era una vista;
-  ahora vive en `midas_features_consumo_silver`, el único que la necesitaba. Si vas a comparar
-  tipos de solicitud, extrae el código con `REGEXP_EXTRACT`, nunca con `SPLIT` (devuelve cadena
-  vacía con códigos negativos).
+**Fue una tabla adoptada hasta el fork `c2` (2026-08-11).** Compartíamos el objeto del modelo
+legacy: no lo definíamos nosotros, su schema mandaba y por eso no llevaba DDL. Esa convivencia
+tuvo un costo medible — dos procesos escribiendo el mismo objeto, y un `CREATE OR REPLACE` ajeno
+que dejó R5 en cero sobre 3.152 filas con los datos sanos en la tabla. Con el fork la tabla es
+nuestra, tiene su DDL y un solo escritor.
+
+Lo que sigue siendo cierto para quien la consuma:
+- **No tiene `tipo_solicitud_cod`.** Esa derivación vive en `midas_features_consumo_silver`, el
+  único que la necesitaba. Si vas a comparar tipos de solicitud, extrae el código con
+  `REGEXP_EXTRACT`, nunca con `SPLIT` (devuelve cadena vacía con códigos negativos).
 - **No tiene `run_id` ni `fecha_carga_silver`.** La trazabilidad de su carga sigue en
   `midas_log_cargas`, igual que la de todos los demás objetos.
-- **No lleva DDL en el repo, y es a propósito.** Un `CREATE TABLE IF NOT EXISTS` contra una tabla
-  que ya existe no hace nada y no falla: dejaría creer que el contrato es el nuestro cuando no lo
-  es.
-- Carga con `INSERT OVERWRITE ... BY NAME`. Si su dueño le agrega o quita una columna, **la carga
-  falla**. Es lo correcto: la forma posicional escribiría los valores corridos sin avisar.
+- Carga con `INSERT OVERWRITE ... BY NAME`, contra el schema que declara su DDL. Si la Bronze
+  gana o pierde una columna, **la carga falla**. Es lo correcto: la forma posicional escribiría
+  los valores corridos sin avisar.
 
 **El estado de investigación no se filtra, y es a propósito.** `2 = IMPUTABLE AL CLIENTE` y
 `3 = IMPUTABLE A LA EMPRESA` son **resoluciones, no cierres**. Un supuesto previo del proyecto
@@ -257,8 +257,8 @@ Ahora se orquestan y se loguean como el resto, pero **no se reescribieron**: no 
 
 El único cambio de contenido es aditivo (I13): `estado_corte_facturable` y
 `estado_corte_facturable_desc` **al final** de la proyección de
-`midas_ordenes_calidad_pendientes_silver`. Salen del `LEFT JOIN` que ya existía, así que el
+`midas_ordenes_calidad_pendientes_c2_silver`. Salen del `LEFT JOIN` que ya existía, así que el
 **conteo de filas no cambia**.
 
-`midas_historial_critica_silver` **cambió de contenido** con la rama 4 de la v3: ahora mezcla las
+`midas_historial_critica_c2_silver` **cambió de contenido** con la rama 4 de la v3: ahora mezcla las
 actividades `102010`, `7400027` y `1611/1613/1677/...` sin filtrar. Se documenta, no se toca.

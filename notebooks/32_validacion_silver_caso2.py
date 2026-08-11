@@ -115,10 +115,10 @@ print("Utilidades listas.")
 # (nombre, forma esperada)  forma: TABLE | VIEW
 OBJETOS = [
     # Legacy Caso 1 — se orquestan y se loguean, pero conservan su CREATE OR REPLACE TABLE
-    ("midas_datos_basicos_producto_silver",          "TABLE"),
-    ("midas_ordenes_calidad_pendientes_silver",      "TABLE"),
-    ("midas_historial_critica_silver",               "TABLE"),
-    ("midas_historial_facturacion_silver",           "TABLE"),
+    ("midas_datos_basicos_producto_c2_silver",          "TABLE"),
+    ("midas_ordenes_calidad_pendientes_c2_silver",      "TABLE"),
+    ("midas_historial_critica_c2_silver",               "TABLE"),
+    ("midas_historial_facturacion_c2_silver",           "TABLE"),
     # Nuevas del Caso 2
     ("midas_historial_consumo_silver",               "TABLE"),
     ("midas_historial_cargos_silver",                "TABLE"),
@@ -128,7 +128,7 @@ OBJETOS = [
     # ADOPTADA: es TABLA y no es nuestra. Su schema lo fija su dueño; nosotros solo
     # refrescamos el contenido. Por eso no se le exige comentario ni columnas de
     # auditoría, igual que a las legacy del Caso 1.
-    ("midas_datos_detalle_solicitudes_silver",       "TABLE"),
+    ("midas_datos_detalle_solicitudes_c2_silver",       "TABLE"),
     ("midas_datos_investigacion_consumo_silver",     "VIEW"),
     ("midas_datos_perdidas_no_operacionales_silver", "VIEW"),
     ("midas_ordenes_variacion_consumo_silver",       "VIEW"),
@@ -136,7 +136,7 @@ OBJETOS = [
 
 LEGACY_CASO1 = [o for o, _ in OBJETOS[:4]]
 # Objetos que NO definimos nosotros: no se les exige comentario por columna.
-ADOPTADAS = ["midas_datos_detalle_solicitudes_silver"]
+ADOPTADAS = ["midas_datos_detalle_solicitudes_c2_silver"]
 TABLAS_NUEVAS = ["midas_historial_consumo_silver",
                  "midas_historial_cargos_silver",
                  "midas_features_consumo_silver"]
@@ -284,9 +284,9 @@ for obj, _ in OBJETOS:
 titulo("S3b - ¿Dónde se rompe la cadena del corte facturable?")
 
 CADENA = [
-    ("midas_datos_basicos_producto_bronze", "lo alimenta el ALTER ADD COLUMNS de crear_objetos"),
-    ("midas_datos_basicos_producto_silver", "CREATE OR REPLACE TABLE ... SELECT * de Bronze"),
-    ("midas_ordenes_calidad_pendientes_silver", "LEFT JOIN contra basicos_bronze (I13, al final)"),
+    ("midas_datos_basicos_producto_c2_bronze", "lo alimenta el ALTER ADD COLUMNS de crear_objetos"),
+    ("midas_datos_basicos_producto_c2_silver", "CREATE OR REPLACE TABLE ... SELECT * de Bronze"),
+    ("midas_ordenes_calidad_pendientes_c2_silver", "LEFT JOIN contra basicos_bronze (I13, al final)"),
     ("midas_datos_servicios_contrato_silver", "vista sobre basicos_silver"),
     ("midas_ordenes_variacion_consumo_silver", "vista sobre ordenes_calidad_pendientes_silver"),
 ]
@@ -663,8 +663,8 @@ else:
 # COMMAND ----------
 titulo("S9 - Caso 1 intacto")
 
-OBJ = "midas_ordenes_calidad_pendientes_silver"
-BRZ = "midas_ordenes_calidad_pendientes_bronze"
+OBJ = "midas_ordenes_calidad_pendientes_c2_silver"
+BRZ = "midas_ordenes_calidad_pendientes_c2_bronze"
 
 if existe(OBJ) and existe(BRZ):
     n_silver, n_bronze = n_filas(OBJ), n_filas(BRZ)

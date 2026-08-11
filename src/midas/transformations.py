@@ -40,17 +40,18 @@ log = logging.getLogger(__name__)
 # tipo_carga -> subcarpeta de la que sale la sentencia de CARGA
 _FASE_CARGA = {
     "SILVER_TABLE": "load",
-    "SILVER_TABLE_ADOPTADA": "load",
     "SILVER_LEGACY": "load",
     "SILVER_VIEW": "view",
 }
 # Solo estos tienen DDL previo.
 #
-# SILVER_TABLE_ADOPTADA queda FUERA a proposito: la tabla no es nuestra. Existe desde
-# antes, tiene consumidores propios y su schema MANDA. Nosotros solo refrescamos su
-# contenido; declararle un DDL seria arrogarnos una definicion que no nos pertenece.
-# Es el mismo criterio que ya se aplico en Bronze con la tabla de solicitudes
-# (ver _SOLICITUDES_BRONZE_COLS en db/processing.py): se ADOPTA, no se recrea.
+# Aqui existia SILVER_TABLE_ADOPTADA, para la tabla de solicitudes: no era nuestra, tenia
+# consumidores propios y su schema mandaba, asi que se le negaba el DDL a proposito. El
+# fork `c2` (2026-08-11) cerro ese caso — ya no compartimos ningun objeto con el Caso 1,
+# asi que no queda ninguna tabla con dueño externo y el tipo se retiro.
+#
+# SILVER_LEGACY sigue sin DDL por otra razon: se materializa con su propio
+# CREATE OR REPLACE TABLE, que recrea la tabla en cada carga.
 _CON_DDL = {"SILVER_TABLE"}
 
 

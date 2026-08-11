@@ -563,7 +563,7 @@ order by 1 desc
 # v3 R2 — `QUERY_SERVICIOS_CONTRATO` ELIMINADA (invariante I12: un agrupador, una tabla).
 # Era un espejo literal de QUERY_DATOS_BASICOS que solo cambiaba el filtro
 # (:p_contrato en vez de :address_id). El roster del contrato se obtiene ahora FILTRANDO
-# midas_datos_basicos_producto_bronze por `contrato`; no hace falta una segunda extracción.
+# midas_datos_basicos_producto_c2_bronze por `contrato`; no hace falta una segunda extracción.
 # Verificado 2026-07-29: los 782 SS que sólo existían en la tabla retirada pertenecían a
 # 181 contratos ausentes tanto de ordenes_pendientes como de datos_basicos, es decir eran
 # residuo de corridas anteriores, no información nueva.
@@ -632,7 +632,7 @@ ORDER BY i.register_date DESC
 # ventana de fraude.
 #
 # Nombre `perdidas_no_operacionales` (no la sigla "pno") a proposito: `pno` ya se usa como
-# COLUMNA en midas_datos_lecturas_producto_bronze con otro significado (marcador disperso).
+# COLUMNA en midas_datos_lecturas_producto_c2_bronze con otro significado (marcador disperso).
 #
 # Divergencias deliberadas frente al SQL crudo entregado:
 #   1. Hint `LEADING(fm_possible_ntl))` tenia un parentesis de mas -> Oracle IGNORA en

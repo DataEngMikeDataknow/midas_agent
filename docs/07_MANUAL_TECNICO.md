@@ -68,15 +68,15 @@ crea el `ControlCargasClient` y corre `ejecutar_cadena_extraccion`. Cierra la co
 Tablas Bronze producidas (12). Las 8 primeras son la cadena del Caso 1; las 4 ultimas se
 promovieron para el Caso 2. La fuente de verdad del listado es `SEED` en
 `notebooks/00_creacion_objetos_midas.py`, no este documento:
-- `midas_ordenes_calidad_pendientes_bronze`
-- `midas_datos_basicos_producto_bronze`
-- `midas_datos_lecturas_producto_bronze`
-- `midas_datos_consumos_producto_bronze`
-- `midas_datos_ordenes_previa_critica_bronze`
-- `midas_datos_cometarios_ordenes_bronze`
-- `midas_datos_cuentas_cobro_bronze`
-- `midas_datos_detalle_cargos_bronze`
-- `midas_datos_detalle_solicitudes_bronze`
+- `midas_ordenes_calidad_pendientes_c2_bronze`
+- `midas_datos_basicos_producto_c2_bronze`
+- `midas_datos_lecturas_producto_c2_bronze`
+- `midas_datos_consumos_producto_c2_bronze`
+- `midas_datos_ordenes_previa_critica_c2_bronze`
+- `midas_datos_cometarios_ordenes_c2_bronze`
+- `midas_datos_cuentas_cobro_c2_bronze`
+- `midas_datos_detalle_cargos_c2_bronze`
+- `midas_datos_detalle_solicitudes_c2_bronze`
 - `midas_datos_consumos_contrato_bronze`
 - `midas_datos_investigacion_consumo_bronze`
 - `midas_datos_perdidas_no_operacionales_bronze`
@@ -104,24 +104,29 @@ Objetos Silver producidos (13), en orden topologico sobre `query_padre_id`:
 
 | Objeto | tipo_carga | Nota |
 |---|---|---|
-| `midas_datos_basicos_producto_silver` | SILVER_LEGACY | Caso 1, SQL verbatim |
-| `midas_ordenes_calidad_pendientes_silver` | SILVER_LEGACY | Caso 1 + 2 columnas aditivas de corte facturable |
-| `midas_historial_critica_silver` | SILVER_LEGACY | Caso 1 |
-| `midas_historial_facturacion_silver` | SILVER_LEGACY | Caso 1 |
+| `midas_datos_basicos_producto_c2_silver` | SILVER_LEGACY | Caso 1, SQL verbatim |
+| `midas_ordenes_calidad_pendientes_c2_silver` | SILVER_LEGACY | Caso 1 + 2 columnas aditivas de corte facturable |
+| `midas_historial_critica_c2_silver` | SILVER_LEGACY | Caso 1 |
+| `midas_historial_facturacion_c2_silver` | SILVER_LEGACY | Caso 1 |
 | `midas_historial_consumo_silver` | SILVER_TABLE | Grano (SS, periodo, tipo, medidor) |
 | `midas_historial_cargos_silver` | SILVER_TABLE | Grano linea de cargo |
 | `midas_features_consumo_silver` | SILVER_TABLE | 7 reglas del Caso 2 |
 | `midas_historial_consumo_periodo_silver` | SILVER_VIEW | Colapsa el medidor |
 | `midas_datos_servicios_contrato_silver` | SILVER_VIEW | Roster por contrato |
-| `midas_datos_detalle_solicitudes_silver` | SILVER_TABLE_ADOPTADA | Tabla preexistente con dueño propio: se refresca, no se define |
+| `midas_datos_detalle_solicitudes_c2_silver` | SILVER_TABLE | Reflejo 1:1 de su Bronze. Fue adoptada hasta el fork `c2` |
 | `midas_datos_investigacion_consumo_silver` | SILVER_VIEW | Pasarela |
 | `midas_datos_perdidas_no_operacionales_silver` | SILVER_VIEW | Pasarela |
 | `midas_ordenes_variacion_consumo_silver` | SILVER_VIEW | **Nivel 2**, unico que filtra por actividad (I15) |
 
 Los objetos nuevos usan `CREATE TABLE IF NOT EXISTS` + `INSERT OVERWRITE ... BY NAME` (I18). Los
-`SILVER_LEGACY` conservan su `CREATE OR REPLACE TABLE`: cambiarlos no era el alcance. El
-`SILVER_TABLE_ADOPTADA` **no lleva DDL**: la tabla ya existia con dueño y consumidores propios,
-asi que su schema manda y solo se refresca su contenido.
+`SILVER_LEGACY` conservan su `CREATE OR REPLACE TABLE`: tras el fork `c2` el SQL sigue verbatim
+salvo los nombres, asi que su contenido es demostrablemente el mismo que produce el Caso 1.
+
+Existio un tercer tipo, `SILVER_TABLE_ADOPTADA`, para la tabla de solicitudes: no era nuestra, su
+schema mandaba y por eso se le negaba el DDL. El **fork `c2` (2026-08-11)** lo retiro. Este bundle
+ya no escribe ningun objeto del Caso 1: construye su propia copia `_c2_` de cada uno de los 14 que
+antes compartia. Las tablas viejas siguen existiendo y son del otro equipo; nosotros solo dejamos
+de escribirlas.
 
 Contrato de la capa para consumidores: [`contrato_silver.md`](contrato_silver.md).
 Decision de grano: [`adr/0002-grano-historial-consumo.md`](adr/0002-grano-historial-consumo.md).
@@ -187,7 +192,7 @@ Task `check` (notebook). On-demand, sin schedule. Valida DNS -> TCP -> jar -> `S
 
 ### Salida
 - 12 Parquet en `/Volumes/<source_catalog>/<source_schema>/<source_volume>/<source_base_path>`
-- 12 tablas Bronze, 8 tablas Silver (una de ellas adoptada) y 5 vistas Silver en
+- 12 tablas Bronze, 8 tablas Silver y 5 vistas Silver en
   `<catalog_destino>.facturacion`
 - filas de bitacora en `midas_log_cargas`
 

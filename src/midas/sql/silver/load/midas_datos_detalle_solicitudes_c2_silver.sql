@@ -1,5 +1,5 @@
 -- =============================================================================
--- midas_datos_detalle_solicitudes_silver — TABLA ADOPTADA
+-- midas_datos_detalle_solicitudes_c2_silver — TABLA ADOPTADA
 --
 -- ESTA TABLA NO ES NUESTRA. Existia antes de este trabajo, tiene consumidores propios
 -- y su schema MANDA. Nosotros solo refrescamos su contenido desde Bronze.
@@ -27,7 +27,7 @@
 --
 -- NO FILTRA NADA. Ni vigencia, ni tipo, ni estado.
 -- =============================================================================
-INSERT OVERWRITE {catalog}.{schema}.midas_datos_detalle_solicitudes_silver BY NAME
+INSERT OVERWRITE {catalog}.{schema}.midas_datos_detalle_solicitudes_c2_silver BY NAME
 SELECT
     servicio_suscrito,
     id_solicitud,
@@ -40,4 +40,4 @@ SELECT
     medio_recepcion,
     analista,
     area_organizacional
-FROM {catalog}.{schema}.midas_datos_detalle_solicitudes_bronze
+FROM {catalog}.{schema}.midas_datos_detalle_solicitudes_c2_bronze

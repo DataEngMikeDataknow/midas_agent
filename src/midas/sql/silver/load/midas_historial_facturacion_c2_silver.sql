@@ -1,5 +1,5 @@
 -- =============================================================================
--- midas_historial_facturacion_silver
+-- midas_historial_facturacion_c2_silver
 --
 -- LEGACY del Caso 1 (actividad 1019). Se orquesta y se loguea como el resto de la
 -- capa, pero CONSERVA su patron `CREATE OR REPLACE TABLE`: cambiarlo no es de este
@@ -19,7 +19,7 @@
 -- determinista en id_periodo_consumo, filtro contra el literal '4-Consumo facturado',
 -- fan-out por medidor) quedan tal cual, esperando su migracion.
 
-CREATE OR REPLACE TABLE midas_historial_facturacion_silver
+CREATE OR REPLACE TABLE {catalog}.{schema}.midas_historial_facturacion_c2_silver
 AS
 WITH cargos_agregados_temp AS (
     SELECT
@@ -34,7 +34,7 @@ WITH cargos_agregados_temp AS (
                 unidades
             )
         ) AS detalle_cargos
-    FROM midas_datos_detalle_cargos_bronze
+    FROM {catalog}.{schema}.midas_datos_detalle_cargos_c2_bronze
     GROUP BY id_cuenta_cobro
 ),
 consumos_agg_temp AS (
@@ -44,7 +44,7 @@ consumos_agg_temp AS (
         FIRST(id_periodo_consumo) AS id_periodo_consumo,
         tipo_consumo AS tipo_consumo_facturado,
         SUM(consumo) AS consumo_facturado_periodo
-    FROM midas_datos_consumos_producto_bronze
+    FROM {catalog}.{schema}.midas_datos_consumos_producto_c2_bronze
     WHERE metodo_calculo = '4-Consumo facturado'
     GROUP BY
         servicio_suscrito,
@@ -75,13 +75,13 @@ SELECT
                 lect.limite_inferior,
                 lect.observacion_Lectura,
                 cargos.detalle_cargos
-            FROM midas_datos_cuentas_cobro_bronze AS cc
+            FROM {catalog}.{schema}.midas_datos_cuentas_cobro_c2_bronze AS cc
             LEFT JOIN cargos_agregados_temp AS cargos
                 ON cc.id_cuenta_cobro = cargos.id_cuenta_cobro
             LEFT JOIN consumos_agg_temp AS cons
                 ON cc.servicio_suscrito = cons.servicio_suscrito 
                 AND cc.id_periodo_facturacion = cons.id_periodo_facturacion
-            LEFT JOIN midas_datos_lecturas_producto_bronze AS lect
+            LEFT JOIN {catalog}.{schema}.midas_datos_lecturas_producto_c2_bronze AS lect
                 ON cc.servicio_suscrito = lect.servicio_suscrito 
                 AND cc.id_periodo_facturacion = lect.id_periodo_facturacion
                 AND lect.tipo_consumo = cons.tipo_consumo_facturado

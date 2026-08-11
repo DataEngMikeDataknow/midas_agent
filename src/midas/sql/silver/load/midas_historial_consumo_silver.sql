@@ -52,7 +52,7 @@ WITH lecturas AS (
         CAST(observacion_lectura_2 AS STRING)                   AS observacion_lectura_2,
         CAST(observacion_lectura_3 AS STRING)                   AS observacion_lectura_3,
         CAST(pno AS STRING)                                     AS pno
-    FROM {catalog}.{schema}.midas_datos_lecturas_producto_bronze
+    FROM {catalog}.{schema}.midas_datos_lecturas_producto_c2_bronze
     -- Las tres columnas del grano que NO admiten centinela. En dllo no hay ninguna
     -- nula; el filtro es la garantia de que el NOT NULL del DDL nunca reviente.
     WHERE servicio_suscrito  IS NOT NULL
@@ -78,7 +78,7 @@ consumos_periodo AS (
              THEN MAX(           CASE WHEN SPLIT(metodo_calculo, '-')[0] = {p_metodo_calculo_facturado} THEN funcion_calculo END) END AS funcion_calculo,
         COUNT(DISTINCT           CASE WHEN SPLIT(metodo_calculo, '-')[0] = {p_metodo_calculo_facturado} THEN funcion_calculo END)     AS n_funciones_calculo,
         MAX(TO_DATE(SUBSTR(fecha_registro, 1, 10)))                                                                 AS fecha_registro_ultima
-    FROM {catalog}.{schema}.midas_datos_consumos_producto_bronze
+    FROM {catalog}.{schema}.midas_datos_consumos_producto_c2_bronze
     WHERE servicio_suscrito  IS NOT NULL
       AND id_periodo_consumo IS NOT NULL
       AND tipo_consumo       IS NOT NULL

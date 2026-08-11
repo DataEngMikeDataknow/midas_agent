@@ -109,7 +109,7 @@ cargos_periodo AS (
     GROUP BY servicio_suscrito, id_periodo_consumo
 ),
 solicitudes AS (
-    -- midas_datos_detalle_solicitudes_silver es una tabla ADOPTADA: su schema no lo
+    -- midas_datos_detalle_solicitudes_c2_silver es una tabla ADOPTADA: su schema no lo
     -- controlamos y NO trae el codigo numerico del tipo. La derivacion vive aqui, en
     -- el unico consumidor que la necesita.
     --
@@ -119,7 +119,7 @@ solicitudes AS (
         servicio_suscrito,
         CAST(REGEXP_EXTRACT(tipo_solicitud, '^\\s*(-?[0-9]+)', 1) AS INT) AS tipo_solicitud_cod,
         CAST(fecha_atencion_solicitud AS DATE)                            AS fecha_atencion
-    FROM {catalog}.{schema}.midas_datos_detalle_solicitudes_silver
+    FROM {catalog}.{schema}.midas_datos_detalle_solicitudes_c2_silver
     WHERE fecha_atencion_solicitud IS NOT NULL
 ),
 solicitudes_periodo AS (

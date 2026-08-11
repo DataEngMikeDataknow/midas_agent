@@ -1,5 +1,5 @@
 -- =============================================================================
--- midas_historial_critica_silver
+-- midas_historial_critica_c2_silver
 --
 -- LEGACY del Caso 1 (actividad 1019). Se orquesta y se loguea como el resto de la
 -- capa, pero CONSERVA su patron `CREATE OR REPLACE TABLE`: cambiarlo no es de este
@@ -20,7 +20,7 @@
 -- 7400027 y 1611/1613/1677/... El contrato semantico cambio aunque el SQL no.
 -- El filtro por actividad, si se quiere, va en una vista de Nivel 2.
 
-CREATE OR REPLACE TABLE midas_historial_critica_silver
+CREATE OR REPLACE TABLE {catalog}.{schema}.midas_historial_critica_c2_silver
 AS
 WITH comentarios_critica_agg_temp AS (
     SELECT
@@ -35,12 +35,12 @@ WITH comentarios_critica_agg_temp AS (
             ),
             TRUE
         ) AS lista_comentarios
-    FROM midas_datos_cometarios_ordenes_bronze
+    FROM {catalog}.{schema}.midas_datos_cometarios_ordenes_c2_bronze
     GROUP BY id_orden
 )
 SELECT
                 o.*,
                 c.lista_comentarios
-            FROM midas_datos_ordenes_previa_critica_bronze AS o
+            FROM {catalog}.{schema}.midas_datos_ordenes_previa_critica_c2_bronze AS o
             LEFT JOIN comentarios_critica_agg_temp AS c
                 ON o.id_orden = c.id_orden

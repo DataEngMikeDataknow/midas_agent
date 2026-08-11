@@ -17,7 +17,7 @@ CREATE OR REPLACE VIEW {catalog}.{schema}.midas_datos_investigacion_consumo_silv
     id_periodo_consumo        COMMENT 'pe_invest_consum.consumption_period. VERIFICADO que es un PECSCONS: el join contra consumos va por SS + periodo de CONSUMO, nunca por periodo de facturacion (se midio 21 coincidencias contra 0).',
     tipo_consumo              COMMENT 'codigo-descripcion del tipo de consumo investigado.',
     tipo_consumo_cod          COMMENT 'Codigo numerico del tipo. 3 activa, 6 reactiva.',
-    solicitud_investigacion   COMMENT 'pe_invest_consum.investigate_request. Cruza con midas_datos_detalle_solicitudes_silver.id_solicitud.',
+    solicitud_investigacion   COMMENT 'pe_invest_consum.investigate_request. Cruza con midas_datos_detalle_solicitudes_c2_silver.id_solicitud.',
     estado_investigacion      COMMENT 'Codigo CRUDO. 1 = EN INVESTIGACION (abierta), 2 = IMPUTABLE AL CLIENTE, 3 = IMPUTABLE A LA EMPRESA. El 2 y el 3 son RESOLUCIONES, no cierre. El estado DEFINE si se le cobra o no al usuario.',
     estado_investigacion_desc COMMENT 'codigo-descripcion desde pe_invest_cons_state.',
     fecha_registro            COMMENT 'Cuando se registro la investigacion. La ventana de 6 meses de Bronze se aplica sobre ESTA fecha, no sobre el periodo de consumo.',

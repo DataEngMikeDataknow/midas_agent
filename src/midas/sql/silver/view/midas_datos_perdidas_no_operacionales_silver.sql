@@ -22,7 +22,7 @@ CREATE OR REPLACE VIEW {catalog}.{schema}.midas_datos_perdidas_no_operacionales_
     estado_pno_desc        COMMENT 'codigo-descripcion del estado. Catalogo entregado por negocio el 2026-08-05 y resuelto INLINE en la query de Bronze (I11): en Oracle no existe tabla catalogo para este campo, asi que es un CASE explicito. En dllo solo aparece F (fraude confirmado).',
     tipo_irregularidad     COMMENT 'codigo-descripcion desde FM_IRREGULARITY_TYPE. Outer join: NULL si la irregularidad no esta parametrizada.',
     tipo_irregularidad_cod COMMENT 'Codigo numerico de la irregularidad.',
-    id_solicitud           COMMENT 'FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_silver.id_solicitud.',
+    id_solicitud           COMMENT 'FM_POSSIBLE_NTL.PACKAGE_ID. Cruza con midas_datos_detalle_solicitudes_c2_silver.id_solicitud.',
     id_orden               COMMENT 'Orden asociada al expediente.',
     fecha_registro         COMMENT 'Cuando se abrio el expediente.',
     fecha_inicio_fraude    COMMENT 'Inicio de la ventana defraudada.',

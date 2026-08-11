@@ -28,11 +28,34 @@ from src.midas.silver_params import (  # noqa: E402
 from src.midas.transformations import SilverTransformer, orden_topologico  # noqa: E402
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "src" / "midas" / "sql" / "silver"
-LEGACY = [
+BRONZE_DDL_DIR = Path(__file__).resolve().parents[1] / "src" / "midas" / "sql" / "bronze" / "ddl"
+
+# Los 14 objetos que este bundle compartía con el equipo del Caso 1 hasta el fork del
+# 2026-08-11. Escribirlos volvía a pisar sus esquemas — los 4 SILVER_LEGACY con un
+# CREATE OR REPLACE TABLE, que reemplaza la definición entera. Sus tablas siguen
+# existiendo y son suyas; nosotros construimos las `_c2_` equivalentes.
+NOMBRES_CASO1 = [
+    "midas_ordenes_calidad_pendientes_bronze",
+    "midas_datos_basicos_producto_bronze",
+    "midas_datos_lecturas_producto_bronze",
+    "midas_datos_consumos_producto_bronze",
+    "midas_datos_ordenes_previa_critica_bronze",
+    "midas_datos_cometarios_ordenes_bronze",
+    "midas_datos_cuentas_cobro_bronze",
+    "midas_datos_detalle_cargos_bronze",
+    "midas_datos_detalle_solicitudes_bronze",
     "midas_datos_basicos_producto_silver",
     "midas_ordenes_calidad_pendientes_silver",
     "midas_historial_critica_silver",
     "midas_historial_facturacion_silver",
+    "midas_datos_detalle_solicitudes_silver",
+]
+
+LEGACY = [
+    "midas_datos_basicos_producto_c2_silver",
+    "midas_ordenes_calidad_pendientes_c2_silver",
+    "midas_historial_critica_c2_silver",
+    "midas_historial_facturacion_c2_silver",
 ]
 
 
@@ -222,12 +245,12 @@ class TestOrquestador(unittest.TestCase):
     def test_rechaza_archivo_con_varias_sentencias(self):
         t = SilverTransformer(MagicMock(), "cat", "sch", MagicMock(), sql_dir=str(SQL_DIR))
         t.ctx = {"catalog": "cat", "schema": "sch"}
-        ruta = SQL_DIR / "load" / "midas_datos_basicos_producto_silver.sql"
+        ruta = SQL_DIR / "load" / "midas_datos_basicos_producto_c2_silver.sql"
         original = ruta.read_text(encoding="utf-8")
         try:
             ruta.write_text(original + "\nSELECT 1;\nSELECT 2\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "una sentencia"):
-                t._leer_sql("load", "midas_datos_basicos_producto_silver")
+                t._leer_sql("load", "midas_datos_basicos_producto_c2_silver")
         finally:
             ruta.write_text(original, encoding="utf-8")
 
@@ -275,6 +298,15 @@ class TestOrquestador(unittest.TestCase):
         self.assertEqual(SIN_PARAMETRIZAR, "__SIN_PARAMETRIZAR__")
 
 
+def _seed_bronze():
+    """tabla_destino de SEED (Bronze), leído del notebook de creación."""
+    texto = (Path(__file__).resolve().parents[1]
+             / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+    ini = texto.index("SEED = [")
+    bloque = texto[ini:texto.index("\n]", ini)]
+    return re.findall(r'\(\s*"(midas_\w+_bronze)"\s*,', bloque)
+
+
 def _seed_silver():
     """(tabla_destino, tipo_carga) de SEED_SILVER, leído del notebook de creación.
 
@@ -308,7 +340,7 @@ class TestSeedContraArchivos(unittest.TestCase):
 
     def test_las_dependencias_silver_respetan_el_orden(self):
         """REGRESIÓN (dllo, 2026-08-11): `midas_features_consumo_silver` (orden 43) leía
-        `midas_datos_detalle_solicitudes_silver`, que estaba sembrada en el orden 53. Las
+        `midas_datos_detalle_solicitudes_c2_silver`, que estaba sembrada en el orden 53. Las
         features se calculaban SIEMPRE contra el contenido de la corrida anterior, y R5
         publicó `false` en las 3.152 filas con los datos sanos en la tabla.
 
@@ -358,24 +390,18 @@ class TestSeedContraArchivos(unittest.TestCase):
                 self.assertIn("INSERT OVERWRITE", codigo)
                 self.assertNotIn("CREATE OR REPLACE TABLE", codigo)
 
-    def test_la_tabla_adoptada_no_declara_ddl(self):
-        """Una tabla ADOPTADA no es nuestra: su schema lo fija su dueño.
+    def test_ya_no_hay_tablas_adoptadas(self):
+        """El fork `c2` (2026-08-11) cerró el concepto de tabla ADOPTADA.
 
-        Declararle un `CREATE TABLE IF NOT EXISTS` sería peor que inútil — contra una
-        tabla que ya existe no hace nada, no falla, y deja creído que el contrato es el
-        nuestro. Y debe cargar con BY NAME: si el dueño le cambia una columna, queremos
-        que falle, no que escriba los valores corridos."""
-        adoptadas = [k for _, k, t in _seed_silver() if t == "SILVER_TABLE_ADOPTADA"]
-        self.assertEqual(adoptadas, ["midas_datos_detalle_solicitudes_silver"])
-        for key in adoptadas:
-            with self.subTest(tabla=key):
-                self.assertFalse((SQL_DIR / "ddl" / f"{key}.sql").exists(),
-                                 "una tabla adoptada no lleva DDL propio")
-                self.assertFalse((SQL_DIR / "view" / f"{key}.sql").exists(),
-                                 "quedó el .sql de vista de cuando era SILVER_VIEW")
-                codigo = _codigo((SQL_DIR / "load" / f"{key}.sql").read_text(encoding="utf-8")).upper()
-                self.assertIn("INSERT OVERWRITE", codigo)
-                self.assertIn("BY NAME", codigo)
+        Una adoptada era una tabla con dueño externo: no llevaba DDL porque su schema lo
+        fijaba su dueño. Ya no compartimos ningún objeto con el Caso 1, así que no queda
+        ninguna. Que reaparezca un `SILVER_TABLE_ADOPTADA` significaría que volvimos a
+        escribir sobre la tabla de otro equipo, que es exactamente lo que el fork vino a
+        terminar."""
+        from src.midas.transformations import _FASE_CARGA
+
+        self.assertEqual([k for _, k, t in _seed_silver() if t == "SILVER_TABLE_ADOPTADA"], [])
+        self.assertNotIn("SILVER_TABLE_ADOPTADA", _FASE_CARGA)
 
     def test_todo_tipo_carga_sembrado_lo_conoce_el_orquestador(self):
         """Un tipo_carga que el orquestador no mapea se registra como fallo en la
@@ -458,6 +484,62 @@ class TestSeedContraArchivos(unittest.TestCase):
                     f"{ruta.name}: usa '' para escapar una comilla. Spark escapa con "
                     f"backslash (\\'); el '' rompe cualquier COMMENT que lo contenga.")
 
+    def test_ningun_objeto_del_caso1_se_escribe_desde_src(self):
+        """La red de seguridad del fork `c2` (2026-08-11).
+
+        Este bundle escribía 14 objetos que también usaba el equipo del Caso 1, y los 4
+        `SILVER_LEGACY` con `CREATE OR REPLACE TABLE`, que reemplaza la DEFINICIÓN y no
+        solo las filas. Que uno de esos nombres reaparezca en el código que se ejecuta
+        significa volver a pisar sus esquemas.
+
+        Se revisa `src/`, que es lo que corre. El notebook de creación queda fuera a
+        propósito: tiene que nombrarlos para DESACTIVARLOS, y eso lo cubre el test de
+        abajo."""
+        # Sin esto, vaciar NOMBRES_CASO1 dejaría el test en verde sin vigilar nada.
+        self.assertEqual(len(NOMBRES_CASO1), 14)
+        raiz = Path(__file__).resolve().parents[1] / "src"
+        patron = re.compile(r"\b(" + "|".join(NOMBRES_CASO1) + r")\b")
+        hallazgos = []
+        for ruta in list(raiz.rglob("*.py")) + list(raiz.rglob("*.sql")):
+            if "__pycache__" in ruta.parts:
+                continue
+            for i, linea in enumerate(ruta.read_text(encoding="utf-8").splitlines(), 1):
+                m = patron.search(linea)
+                if m:
+                    rel = ruta.relative_to(raiz.parent).as_posix()
+                    hallazgos.append(f"{rel}:{i}: {m.group(1)}")
+        self.assertEqual(hallazgos, [], "referencias a objetos del Caso 1 en src/")
+
+    def test_los_nombres_del_caso1_solo_aparecen_para_desactivarse(self):
+        """En el notebook de creación los 14 nombres viejos son legítimos en UN solo
+        sitio: `_RETIRADAS_C2`, que apaga sus filas en `midas_control_cargas`. El MERGE
+        del seed nunca borra huérfanas, así que sin esa desactivación seguirían activas y
+        el orquestador intentaría construirlas — es decir, seguiríamos escribiendo sobre
+        el Caso 1 justo después de habernos separado. Fuera de ese bloque, cualquier
+        aparición es un renombrado a medias."""
+        texto = (Path(__file__).resolve().parents[1]
+                 / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+        self.assertIn("_RETIRADAS_C2", texto, "desapareció la desactivación del fork c2")
+        ini = texto.index("_RETIRADAS_C2 = {")
+        fuera = texto[:ini] + texto[texto.index("\n}", ini) + 2:]
+
+        patron = re.compile(r"\b(" + "|".join(NOMBRES_CASO1) + r")\b")
+        sobrantes = sorted({m.group(1) for m in patron.finditer(fuera)})
+        self.assertEqual(sobrantes, [], "nombres del Caso 1 fuera de _RETIRADAS_C2")
+
+    def test_toda_tabla_bronze_sembrada_tiene_su_ddl(self):
+        """El schema de Bronze lo declara el repo, no el Parquet.
+
+        Antes la tabla la creaba `saveAsTable` desde el archivo, en la task de ingesta:
+        el schema salía de un Parquet que podía ser de una corrida vieja, y el error
+        aparecía tres tasks después como un `UNRESOLVED_COLUMN` (dllo, 2026-08-11). Ahora
+        la crea `crear_objetos` desde estos DDL, y la ingesta falla si la tabla no está.
+        Un seed sin su DDL rompe esa cadena."""
+        for tabla in _seed_bronze():
+            with self.subTest(tabla=tabla):
+                self.assertTrue((BRONZE_DDL_DIR / f"{tabla}.sql").exists(),
+                                f"falta {BRONZE_DDL_DIR.name}/{tabla}.sql")
+
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""
         sembrados = {key for _, key, _ in _seed_silver()}
@@ -500,7 +582,7 @@ class TestNivel2(unittest.TestCase):
 class TestCaso1Aditivo(unittest.TestCase):
     """I13: lo del Caso 1 solo crece por el final, y sin cambiar el conteo de filas."""
 
-    RUTA = SQL_DIR / "load" / "midas_ordenes_calidad_pendientes_silver.sql"
+    RUTA = SQL_DIR / "load" / "midas_ordenes_calidad_pendientes_c2_silver.sql"
 
     def test_las_columnas_nuevas_van_al_final(self):
         codigo = _codigo(self.RUTA.read_text(encoding="utf-8"))

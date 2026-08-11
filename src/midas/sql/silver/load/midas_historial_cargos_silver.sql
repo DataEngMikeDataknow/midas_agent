@@ -11,7 +11,7 @@
 -- matchee el patron se propaga como NULL en vez de convertirse en 0 por accidente.
 --
 -- El LEFT JOIN a cuentas no puede multiplicar filas: id_cuenta_cobro SI es unico en
--- midas_datos_cuentas_cobro_bronze (verificado en dllo: 4.480 = 4.480).
+-- midas_datos_cuentas_cobro_c2_bronze (verificado en dllo: 4.480 = 4.480).
 -- =============================================================================
 INSERT OVERWRITE TABLE {catalog}.{schema}.midas_historial_cargos_silver BY NAME
 WITH cargos AS (
@@ -37,7 +37,7 @@ WITH cargos AS (
         CAST(mes_facturacion AS BIGINT)                         AS mes_facturacion,
         CAST(unidades AS DOUBLE)                                AS unidades,
         CAST(valor AS DOUBLE)                                   AS valor
-    FROM {catalog}.{schema}.midas_datos_detalle_cargos_bronze
+    FROM {catalog}.{schema}.midas_datos_detalle_cargos_c2_bronze
     WHERE servicio_suscrito IS NOT NULL
       AND id_cuenta_cobro   IS NOT NULL
 ),
@@ -52,7 +52,7 @@ cuentas AS (
         CAST(valor_periodo AS DOUBLE)                AS valor_periodo_cuenta,
         CAST(valor_recuperado AS DOUBLE)             AS valor_recuperado_cuenta,
         TO_DATE(SUBSTR(CAST(fecha_pago AS STRING), 1, 10)) AS fecha_pago_cuenta
-    FROM {catalog}.{schema}.midas_datos_cuentas_cobro_bronze
+    FROM {catalog}.{schema}.midas_datos_cuentas_cobro_c2_bronze
 ),
 unido AS (
     SELECT c.*,

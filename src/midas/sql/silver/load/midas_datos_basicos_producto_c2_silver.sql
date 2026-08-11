@@ -1,5 +1,5 @@
 -- =============================================================================
--- midas_datos_basicos_producto_silver
+-- midas_datos_basicos_producto_c2_silver
 --
 -- LEGACY del Caso 1 (actividad 1019). Se orquesta y se loguea como el resto de la
 -- capa, pero CONSERVA su patron `CREATE OR REPLACE TABLE`: cambiarlo no es de este
@@ -12,7 +12,7 @@
 -- USE CATALOG / USE SCHEMA antes. Los objetos nuevos si usan {catalog}.{schema}.
 -- =============================================================================
 
-CREATE OR REPLACE TABLE midas_datos_basicos_producto_silver
+CREATE OR REPLACE TABLE {catalog}.{schema}.midas_datos_basicos_producto_c2_silver
             AS
             SELECT *
-            FROM midas_datos_basicos_producto_bronze
+            FROM {catalog}.{schema}.midas_datos_basicos_producto_c2_bronze

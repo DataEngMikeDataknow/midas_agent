@@ -17,7 +17,7 @@
 - Verificado en código: `QUERY_ORDENES_PENDIENTES` filtra solo por `task_type_id = 883`
   (sin `activity_id`).
 - **CONFIRMADO CON DATOS (dllo, 21-22 jul 2026)** — `30_validacion_midas.py` celda F5:
-  actividades presentes en `midas_ordenes_calidad_pendientes_bronze` =
+  actividades presentes en `midas_ordenes_calidad_pendientes_c2_bronze` =
   **`993, 1019, 1013, 995, 996, 1012, 1120`**. Las órdenes del Caso 2 (993) **ya llegan a
   Bronze** con la cadena actual, junto con las del Caso 1 (1019) y otras casuísticas.
   → No se toca la query de entrada; el filtro por actividad vive aguas abajo.
@@ -155,7 +155,14 @@ los **códigos crudos** y **ninguna carga Bronze queda bloqueada** esperando sem
 > - **Bronze de solicitudes: ADOPTADA** (negocio: "se va a usar"). Ver §7.
 
 ## 7. Bronze de solicitudes — decisión de adopción (validada en dllo 21-22 jul 2026)
-La tabla `midas_datos_detalle_solicitudes_bronze` ya existía (huérfana). Su schema **no es
+
+> **SUPERADA por el fork `c2` (2026-08-11).** La adopción se revirtió: este bundle dejó de
+> escribir el objeto compartido y construye el suyo, `midas_datos_detalle_solicitudes_c2_bronze`.
+> El motivo es que la convivencia tuvo un costo real — dos escritores sobre el mismo objeto, y un
+> `CREATE OR REPLACE` ajeno que dejó R5 en cero sobre 3.152 filas con los datos sanos en la tabla.
+> El análisis de abajo se conserva porque explica el mapeo de columnas, que sigue vigente.
+
+La tabla original ya existía (huérfana). Su schema **no es
 incompatible de fondo**: es el mismo dato de `QUERY_DETALLE_SOLICITUDES` con **nombres en
 español** y una columna extra al inicio, `servicio_suscrito`, que **la query no devuelve**
 (es el bind `:p_servicio_suscrito`).
@@ -241,8 +248,8 @@ roster conservaba los datos viejos.
 ### Cómo se obtiene ahora el roster
 
 ```sql
-SELECT * FROM midas_datos_basicos_producto_bronze
- WHERE contrato = (SELECT contrato FROM midas_datos_basicos_producto_bronze
+SELECT * FROM midas_datos_basicos_producto_c2_bronze
+ WHERE contrato = (SELECT contrato FROM midas_datos_basicos_producto_c2_bronze
                     WHERE servicio_suscrito = :ss_de_la_orden)
 ```
 
@@ -283,11 +290,11 @@ faltante devuelve `NULL` y **no** puede hacer desaparecer filas de consumo o de 
 
 | Tabla | Columnas nuevas |
 |---|---|
-| `midas_datos_lecturas_producto_bronze` | `anio_facturacion`, `mes_facturacion`, `ciclo_facturacion` |
-| `midas_datos_consumos_producto_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo` |
-| `midas_datos_ordenes_previa_critica_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo` |
-| `midas_datos_cuentas_cobro_bronze` | `id_periodo_consumo`, `fecha_ini_consumo`, `fecha_fin_consumo` |
-| `midas_datos_detalle_cargos_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo`, `anio_facturacion`, `mes_facturacion` |
+| `midas_datos_lecturas_producto_c2_bronze` | `anio_facturacion`, `mes_facturacion`, `ciclo_facturacion` |
+| `midas_datos_consumos_producto_c2_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo` |
+| `midas_datos_ordenes_previa_critica_c2_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo` |
+| `midas_datos_cuentas_cobro_c2_bronze` | `id_periodo_consumo`, `fecha_ini_consumo`, `fecha_fin_consumo` |
+| `midas_datos_detalle_cargos_c2_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo`, `anio_facturacion`, `mes_facturacion` |
 | `midas_datos_consumos_contrato_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo`, `anio_facturacion`, `mes_facturacion` |
 | `midas_datos_investigacion_consumo_bronze` | `fecha_ini_consumo`, `fecha_fin_consumo` |
 
@@ -394,7 +401,7 @@ Relevante para el filtro de "SS histórico", que sí detiene el análisis.
 
 ## V3.9 Órdenes de decisión de analista
 
-Se obtienen de `midas_datos_ordenes_previa_critica_bronze` filtrando por **servicio suscrito +
+Se obtienen de `midas_datos_ordenes_previa_critica_c2_bronze` filtrando por **servicio suscrito +
 tipo de trabajo + actividad**. Jonatan corrigió en vivo que **la llave de esa tabla es el
 servicio suscrito**, no el `order_id`. Ya está en `midas_parametros` como
 `activity_decision_analista = 7400027`.
@@ -416,7 +423,7 @@ filas del mismo periodo** y no está en el diccionario del proyecto. Hipótesis:
 facturada". Si se confirma, podría ser un filtro más limpio que `COSSMECC = 4`.
 
 **No implementar nada sobre esta columna.** No viene hoy en
-`midas_datos_consumos_producto_bronze` (13 columnas, verificado).
+`midas_datos_consumos_producto_c2_bronze` (13 columnas, verificado).
 
 ## V3.12 Parámetro nuevo
 
@@ -451,8 +458,8 @@ de la rama 1 las excluía por completo.
 ## La solución: RAMA 4 del UNION
 
 Se agrega una cuarta rama a `QUERY_ORDENES_CRITICA_PEVIA`. Las filas caen en
-`midas_datos_ordenes_previa_critica_bronze` — **mismo schema, 12 columnas, sin cambios** — y
-sus comentarios fluyen solos hacia `midas_datos_cometarios_ordenes_bronze` por la cadena
+`midas_datos_ordenes_previa_critica_c2_bronze` — **mismo schema, 12 columnas, sin cambios** — y
+sus comentarios fluyen solos hacia `midas_datos_cometarios_ordenes_c2_bronze` por la cadena
 existente, porque `QUERY_COMENTARIOS_ORDENES` **no filtra por tipo de comentario**: su primera
 rama es `WHERE oc.order_id = :p_id_orden` y trae todos los tipos.
 
@@ -483,8 +490,8 @@ NULL eso lanza `AttributeError`, y como ese paso corre con `abortar_en_fallo=Tru
 Es la **única excepción consciente** a la invariante I13 y al criterio de "cero filas de
 diferencia". Afecta a dos tablas:
 
-- `midas_datos_ordenes_previa_critica_bronze` — suma las filas de decisión.
-- `midas_datos_cometarios_ordenes_bronze` — suma sus comentarios.
+- `midas_datos_ordenes_previa_critica_c2_bronze` — suma las filas de decisión.
+- `midas_datos_cometarios_ordenes_c2_bronze` — suma sus comentarios.
 
 Las otras seis tablas del Caso 1 deben seguir idénticas. Las filas nuevas son precisamente lo
 que se buscaba, así que el aumento es la señal de éxito, no un defecto — pero hay que

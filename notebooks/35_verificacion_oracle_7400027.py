@@ -2,7 +2,7 @@
 # MAGIC %md # 35 - ¿Por qué no llegan las órdenes 7400027?
 # MAGIC
 # MAGIC La rama 4 de `QUERY_ORDENES_CRITICA_PEVIA` **existe** y filtra por
-# MAGIC `oa.activity_id = 7400027`. Pero `midas_datos_ordenes_previa_critica_bronze` no tiene
+# MAGIC `oa.activity_id = 7400027`. Pero `midas_datos_ordenes_previa_critica_c2_bronze` no tiene
 # MAGIC ni una sola fila con esa actividad: 779 filas repartidas en seis actividades, todas de
 # MAGIC crítica o investigación.
 # MAGIC
@@ -57,12 +57,12 @@ from pyspark.sql import functions as F
 # La cadena itera sobre los servicios que salen de datos_basicos, que a su vez sale de
 # ordenes_calidad_pendientes. Es EXACTAMENTE la poblacion que ve la rama 4.
 ss = [r["servicio_suscrito"] for r in
-      spark.table(f"{PREFIJO}.midas_datos_basicos_producto_bronze")
+      spark.table(f"{PREFIJO}.midas_datos_basicos_producto_c2_bronze")
            .select("servicio_suscrito").distinct().collect()]
 print(f"Servicios suscritos en la cadena: {len(ss):,}")
 
 # Las actividades que SI llegaron, para tener la linea base a la vista.
-display(spark.table(f"{PREFIJO}.midas_datos_ordenes_previa_critica_bronze")
+display(spark.table(f"{PREFIJO}.midas_datos_ordenes_previa_critica_c2_bronze")
              .groupBy("actividad").count().orderBy(F.col("count").desc()))
 
 # COMMAND ----------

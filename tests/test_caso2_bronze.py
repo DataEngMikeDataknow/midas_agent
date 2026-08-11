@@ -27,7 +27,7 @@ DIMS_ELIMINADAS = [
     "QUERY_DIM_ESTADO_CORTE_FACTURABLE",
 ]
 PROMO_TABLES = [
-    "midas_datos_detalle_solicitudes_bronze",
+    "midas_datos_detalle_solicitudes_c2_bronze",
     "midas_datos_consumos_contrato_bronze", "midas_datos_investigacion_consumo_bronze",
 ]
 # v3 R2: retirada. Un agrupador, una tabla (I12).
@@ -99,7 +99,7 @@ class TestTablesConfig(unittest.TestCase):
             self.assertIn(t, self.by_name)
 
     def test_pk_solicitudes_compuesta(self):
-        self.assertEqual(self.by_name["midas_datos_detalle_solicitudes_bronze"]["primary_key"],
+        self.assertEqual(self.by_name["midas_datos_detalle_solicitudes_c2_bronze"]["primary_key"],
                          ["servicio_suscrito", "id_solicitud"])
 
     def test_paths_bajo_volumen(self):
@@ -263,7 +263,7 @@ class TestRama4DecisionAnalista(unittest.TestCase):
         """La rama 4 NO agrega columnas: el schema de la Bronze no cambia."""
         import src.midas.main_ingestion as _mi
         cfg = {c["name"]: c for c in _mi.build_tables_config("/vol")}
-        self.assertIn("midas_datos_ordenes_previa_critica_bronze", cfg)
+        self.assertIn("midas_datos_ordenes_previa_critica_c2_bronze", cfg)
 
 
 class TestCriticaDeduplicaLaRama4(unittest.TestCase):

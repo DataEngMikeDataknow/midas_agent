@@ -126,11 +126,11 @@ print("Utilidades listas.")
 # COMMAND ----------
 # ───── Contrato de columnas EN ORDEN (fuente: queries.py de la rama) ─────
 CONTRATO = {
-    "midas_ordenes_calidad_pendientes_bronze": [
+    "midas_ordenes_calidad_pendientes_c2_bronze": [
         "id_orden", "servicio_suscrito", "instalacion", "contrato", "fecha_creacion",
         "actividad", "estado_orden", "comentario_orden",
     ],
-    "midas_datos_basicos_producto_bronze": [
+    "midas_datos_basicos_producto_c2_bronze": [
         "servicio_suscrito", "contrato", "instalacion", "servicio", "fecha_instalacion",
         "fecha_retiro", "periodicidad", "estado_corte", "categoria", "subcategoria", "ciclo",
         "plan_facturacion", "plan_facturacion_pr_product", "nombre_cliente", "identificacion",
@@ -138,7 +138,7 @@ CONTRATO = {
         "saldo_vencido",
         "estado_corte_facturable", "estado_corte_facturable_desc",              # R1
     ],
-    "midas_datos_lecturas_producto_bronze": [
+    "midas_datos_lecturas_producto_c2_bronze": [
         "servicio_suscrito", "id_periodo_consumo", "id_periodo_facturacion",
         "fecha_ini_consumo", "fecha_fin_consumo", "dias_consumo", "tipo_consumo", "tipocons",
         "medidor", "constante", "digitos_medidor", "lectura_anterior", "lectura_actual",
@@ -146,34 +146,34 @@ CONTRATO = {
         "observacion_lectura", "observacion_lectura_2", "observacion_lectura_3", "pno",
         "anio_facturacion", "mes_facturacion", "ciclo_facturacion",             # R3
     ],
-    "midas_datos_consumos_producto_bronze": [
+    "midas_datos_consumos_producto_c2_bronze": [
         "servicio_suscrito", "id_periodo_consumo", "id_periodo_facturacion",
         "anio_facturacion", "mes_facturacion", "ciclo", "ciclo_operativo", "fecha_registro",
         "metodo_calculo", "tipo_consumo", "consumo", "funcion_calculo", "calificacion",
         "fecha_ini_consumo", "fecha_fin_consumo",                               # R3
     ],
-    "midas_datos_ordenes_previa_critica_bronze": [
+    "midas_datos_ordenes_previa_critica_c2_bronze": [
         "id_orden", "servicio_suscrito", "tipo_consumo", "id_periodo_consumo", "tipo_trabajo",
         "actividad", "fecha_creacion_orden", "fecha_legalizacion_orden", "estado",
         "analista_legaliza",
         "fecha_ini_consumo", "fecha_fin_consumo",                               # R3
     ],
-    "midas_datos_cometarios_ordenes_bronze": [
+    "midas_datos_cometarios_ordenes_c2_bronze": [
         "id_orden", "servicio_suscrito", "fecha_registro", "tipo_comentario", "comentario",
     ],
-    "midas_datos_cuentas_cobro_bronze": [
+    "midas_datos_cuentas_cobro_c2_bronze": [
         "servicio_suscrito", "id_cuenta_cobro", "id_periodo_facturacion", "anio_facturacion",
         "mes_facturacion", "fecha_pago", "valor_total", "valor_abonado", "valor_reclamo",
         "valor_pendiente", "fecha_vencimiento", "valor_periodo", "valor_recuperado",
         "id_periodo_consumo", "fecha_ini_consumo", "fecha_fin_consumo",         # R3
     ],
-    "midas_datos_detalle_cargos_bronze": [
+    "midas_datos_detalle_cargos_c2_bronze": [
         "servicio_suscrito", "id_cuenta_cobro", "id_periodo_facturacion", "id_periodo_consumo",
         "concepto", "causal", "signo", "periodo_consumo", "documento_soporte",
         "fecha_creacion_cargo", "programa", "id_tarifa", "unidades", "valor",
         "fecha_ini_consumo", "fecha_fin_consumo", "anio_facturacion", "mes_facturacion",  # R3
     ],
-    "midas_datos_detalle_solicitudes_bronze": [
+    "midas_datos_detalle_solicitudes_c2_bronze": [
         "servicio_suscrito", "id_solicitud", "usuario", "tipo_solicitud", "fecha_solicitud",
         "estado_solicitud", "fecha_atencion_solicitud", "comentario", "medio_recepcion",
         "analista", "area_organizacional",
@@ -196,12 +196,12 @@ CONTRATO = {
 
 # Columnas que la v3 AGREGA. Deben aparecer al final de su tabla, en este orden.
 NUEVAS_V3 = {
-    "midas_datos_basicos_producto_bronze":       ["estado_corte_facturable", "estado_corte_facturable_desc"],
-    "midas_datos_lecturas_producto_bronze":      ["anio_facturacion", "mes_facturacion", "ciclo_facturacion"],
-    "midas_datos_consumos_producto_bronze":      ["fecha_ini_consumo", "fecha_fin_consumo"],
-    "midas_datos_ordenes_previa_critica_bronze": ["fecha_ini_consumo", "fecha_fin_consumo"],
-    "midas_datos_cuentas_cobro_bronze":          ["id_periodo_consumo", "fecha_ini_consumo", "fecha_fin_consumo"],
-    "midas_datos_detalle_cargos_bronze":         ["fecha_ini_consumo", "fecha_fin_consumo",
+    "midas_datos_basicos_producto_c2_bronze":       ["estado_corte_facturable", "estado_corte_facturable_desc"],
+    "midas_datos_lecturas_producto_c2_bronze":      ["anio_facturacion", "mes_facturacion", "ciclo_facturacion"],
+    "midas_datos_consumos_producto_c2_bronze":      ["fecha_ini_consumo", "fecha_fin_consumo"],
+    "midas_datos_ordenes_previa_critica_c2_bronze": ["fecha_ini_consumo", "fecha_fin_consumo"],
+    "midas_datos_cuentas_cobro_c2_bronze":          ["id_periodo_consumo", "fecha_ini_consumo", "fecha_fin_consumo"],
+    "midas_datos_detalle_cargos_c2_bronze":         ["fecha_ini_consumo", "fecha_fin_consumo",
                                                   "anio_facturacion", "mes_facturacion"],
     "midas_datos_consumos_contrato_bronze":      ["fecha_ini_consumo", "fecha_fin_consumo",
                                                   "anio_facturacion", "mes_facturacion"],
@@ -219,15 +219,15 @@ TIPOS_ESPERADOS = {
 
 # PK declarada por ingestion.py (informativa en UC; el NOT NULL sí se aplica).
 PK_DECLARADA = {
-    "midas_ordenes_calidad_pendientes_bronze":      ["id_orden"],
-    "midas_datos_basicos_producto_bronze":          ["servicio_suscrito"],
-    "midas_datos_lecturas_producto_bronze":         ["servicio_suscrito"],
-    "midas_datos_consumos_producto_bronze":         ["servicio_suscrito"],
-    "midas_datos_ordenes_previa_critica_bronze":    ["id_orden"],
-    "midas_datos_cometarios_ordenes_bronze":        ["id_orden"],
-    "midas_datos_cuentas_cobro_bronze":             ["id_cuenta_cobro"],
-    "midas_datos_detalle_cargos_bronze":            ["id_cuenta_cobro"],
-    "midas_datos_detalle_solicitudes_bronze":       ["servicio_suscrito", "id_solicitud"],
+    "midas_ordenes_calidad_pendientes_c2_bronze":      ["id_orden"],
+    "midas_datos_basicos_producto_c2_bronze":          ["servicio_suscrito"],
+    "midas_datos_lecturas_producto_c2_bronze":         ["servicio_suscrito"],
+    "midas_datos_consumos_producto_c2_bronze":         ["servicio_suscrito"],
+    "midas_datos_ordenes_previa_critica_c2_bronze":    ["id_orden"],
+    "midas_datos_cometarios_ordenes_c2_bronze":        ["id_orden"],
+    "midas_datos_cuentas_cobro_c2_bronze":             ["id_cuenta_cobro"],
+    "midas_datos_detalle_cargos_c2_bronze":            ["id_cuenta_cobro"],
+    "midas_datos_detalle_solicitudes_c2_bronze":       ["servicio_suscrito", "id_solicitud"],
     "midas_datos_consumos_contrato_bronze":         ["servicio_suscrito"],
     "midas_datos_investigacion_consumo_bronze":     ["servicio_suscrito"],
     "midas_datos_perdidas_no_operacionales_bronze": ["id_pno"],
@@ -240,15 +240,15 @@ RETIRADAS_V3 = [
 ]
 
 ORDEN_ESPERADO = {
-    "midas_ordenes_calidad_pendientes_bronze": 11,
-    "midas_datos_basicos_producto_bronze": 12,
-    "midas_datos_lecturas_producto_bronze": 13,
-    "midas_datos_consumos_producto_bronze": 14,
-    "midas_datos_ordenes_previa_critica_bronze": 15,
-    "midas_datos_cometarios_ordenes_bronze": 16,
-    "midas_datos_cuentas_cobro_bronze": 17,
-    "midas_datos_detalle_cargos_bronze": 18,
-    "midas_datos_detalle_solicitudes_bronze": 21,
+    "midas_ordenes_calidad_pendientes_c2_bronze": 11,
+    "midas_datos_basicos_producto_c2_bronze": 12,
+    "midas_datos_lecturas_producto_c2_bronze": 13,
+    "midas_datos_consumos_producto_c2_bronze": 14,
+    "midas_datos_ordenes_previa_critica_c2_bronze": 15,
+    "midas_datos_cometarios_ordenes_c2_bronze": 16,
+    "midas_datos_cuentas_cobro_c2_bronze": 17,
+    "midas_datos_detalle_cargos_c2_bronze": 18,
+    "midas_datos_detalle_solicitudes_c2_bronze": 21,
     "midas_datos_consumos_contrato_bronze": 23,
     "midas_datos_investigacion_consumo_bronze": 24,
     "midas_datos_perdidas_no_operacionales_bronze": 25,
@@ -318,7 +318,7 @@ else:
     ids = {r["tabla_destino"]: r["id_carga"] for r in df_ctl.select("tabla_destino", "id_carga").collect()}
     padres = {r["tabla_destino"]: r["query_padre_id"]
               for r in activas.select("tabla_destino", "query_padre_id").collect()}
-    id_basicos = ids.get("midas_datos_basicos_producto_bronze")
+    id_basicos = ids.get("midas_datos_basicos_producto_c2_bronze")
     for hija in ("midas_datos_consumos_contrato_bronze",
                  "midas_datos_perdidas_no_operacionales_bronze"):
         if hija in padres:
@@ -438,7 +438,7 @@ titulo("V3 · R1 FACTURABLE INLINE")
 FACTURABLES    = {1, 4, 5, 6, 91, 93, 94, 97, 99, 100, 107, 122}
 NO_FACTURABLES = {92, 95, 101, 110, 111, 112, 113, 970}   # y 96 solo en energía
 
-TB = "midas_datos_basicos_producto_bronze"
+TB = "midas_datos_basicos_producto_c2_bronze"
 if not existe(TB):
     chequeo("V3", "datos_basicos existe", "N/A", "existe", "no existe")
 elif "estado_corte_facturable" not in columnas(TB):
@@ -547,8 +547,8 @@ if existe(TA3) and existe(TB):
     display(roster.limit(15))
 
     # Muestra explícita: 5 órdenes -> su contrato -> nº de SS del roster
-    if existe("midas_ordenes_calidad_pendientes_bronze"):
-        df_o = spark.table(f"{PREFIJO}.midas_ordenes_calidad_pendientes_bronze")
+    if existe("midas_ordenes_calidad_pendientes_c2_bronze"):
+        df_o = spark.table(f"{PREFIJO}.midas_ordenes_calidad_pendientes_c2_bronze")
         muestra = (df_o.select("id_orden", "servicio_suscrito").limit(5)
                        .join(df_bb.select("servicio_suscrito", "contrato"),
                              on="servicio_suscrito", how="left")
@@ -597,7 +597,7 @@ for tabla, nuevas in NUEVAS_V3.items():
     pct = 100.0 * resueltas / total
 
     # Umbral consciente por tabla: en cargos el NULL es informacion, no ausencia.
-    umbral = 70 if tabla == "midas_datos_detalle_cargos_bronze" else 95
+    umbral = 70 if tabla == "midas_datos_detalle_cargos_c2_bronze" else 95
 
     if pct > umbral:
         estado = "OK"
@@ -608,7 +608,7 @@ for tabla, nuevas in NUEVAS_V3.items():
     nota = ""
     if tabla == "midas_datos_investigacion_consumo_bronze" and pct == 0:
         nota = "consumption_period NO es un PECSCONS: reportar de inmediato"
-    if tabla == "midas_datos_detalle_cargos_bronze":
+    if tabla == "midas_datos_detalle_cargos_c2_bronze":
         nota = "el resto son cargos que NO son de consumo (cargpeco nulo): senal del Caso 17"
     chequeo("V5", tabla.replace("midas_datos_", ""), estado, f"> {umbral}%", f"{pct:.1f}%", nota)
     detalle_v5.append({"tabla": tabla, "filas": total, "resueltas": resueltas,
@@ -619,7 +619,7 @@ if detalle_v5:
 
 # Verificar la CAUSA del 19% sin fecha en cargos: deben ser exactamente las filas sin
 # periodo de consumo. Si no coinciden, entonces si hay un problema de join.
-TC = "midas_datos_detalle_cargos_bronze"
+TC = "midas_datos_detalle_cargos_c2_bronze"
 if existe(TC) and "fecha_ini_consumo" in columnas(TC):
     df_c = spark.table(f"{PREFIJO}.{TC}")
     sin_fecha = df_c.filter(F.col("fecha_ini_consumo").isNull()).count()
@@ -701,7 +701,7 @@ else:
                 "string", t_com, "invariante I10: database.py convierte CLOB a str")
 
         # Cruce con cargos de causal 74
-        TC = "midas_datos_detalle_cargos_bronze"
+        TC = "midas_datos_detalle_cargos_c2_bronze"
         if existe(TC):
             df_c = spark.table(f"{PREFIJO}.{TC}")
             ss_74 = (df_c.filter(F.col("causal").startswith("74-")
@@ -720,7 +720,7 @@ else:
                 chequeo("V6", "cargos con causal 74 en la muestra", "N/A", "> 0", 0)
 
         # Cruce con solicitudes por id_solicitud
-        TS = "midas_datos_detalle_solicitudes_bronze"
+        TS = "midas_datos_detalle_solicitudes_c2_bronze"
         if existe(TS) and "id_solicitud" in columnas(TPNO):
             df_s = spark.table(f"{PREFIJO}.{TS}")
             enlazadas = (df_p.select("id_solicitud").distinct()
@@ -854,7 +854,7 @@ except Exception as e:  # noqa: BLE001
     chequeo("V9", "I11 · inventario del esquema", "N/A", "listable", str(e)[:60])
 
 # I9: la Bronze raíz NO filtra por actividad -> deben convivir varias actividades
-TO = "midas_ordenes_calidad_pendientes_bronze"
+TO = "midas_ordenes_calidad_pendientes_c2_bronze"
 if existe(TO):
     df_o = spark.table(f"{PREFIJO}.{TO}")
     acts = df_o.select("actividad").distinct().count()
@@ -868,7 +868,7 @@ if existe(TO):
             "OK" if n993 > 0 else "REVISAR", "> 0", n993)
 
 # Energía reactiva: debe haber >1 tipo_consumo por (SS, periodo)
-TL = "midas_datos_lecturas_producto_bronze"
+TL = "midas_datos_lecturas_producto_c2_bronze"
 if existe(TL):
     df_l = spark.table(f"{PREFIJO}.{TL}")
     multi = (df_l.groupBy("servicio_suscrito", "id_periodo_consumo")
@@ -893,7 +893,7 @@ if existe("midas_parametros"):
 # MAGIC
 # MAGIC **No hay tablas nuevas.** Es la misma pantalla "Órdenes de Crítica y Previa" y las
 # MAGIC mismas columnas; el filtro `activity_id = 102010` de la rama 1 dejaba afuera esas
-# MAGIC filas. La rama 4 las incorpora a `midas_datos_ordenes_previa_critica_bronze`, y sus
+# MAGIC filas. La rama 4 las incorpora a `midas_datos_ordenes_previa_critica_c2_bronze`, y sus
 # MAGIC comentarios fluyen solos hacia `cometarios_ordenes` por la cadena existente.
 # MAGIC
 # MAGIC > ⚠️ Este cambio **altera los conteos** de dos tablas del Caso 1. Es la única
@@ -904,8 +904,8 @@ if existe("midas_parametros"):
 # COMMAND ----------
 titulo("V10 · RAMA 4 · DECISION DEL ANALISTA")
 
-TCRI = "midas_datos_ordenes_previa_critica_bronze"
-TCOM = "midas_datos_cometarios_ordenes_bronze"
+TCRI = "midas_datos_ordenes_previa_critica_c2_bronze"
+TCOM = "midas_datos_cometarios_ordenes_c2_bronze"
 
 if not existe(TCRI):
     chequeo("V10", "ordenes_previa_critica existe", "N/A", "existe", "no existe")
@@ -1316,8 +1316,8 @@ WHERE product_id = :p_servicio_suscrito --{Argumento 2 - servicio_suscrito}
                           AND nvl(to_date(:p_fecha_legalizacion, 'YYYY-MM-DD HH24:MI:SS'), sysdate)
 """
 
-    ESPERADO_CRITICA = CONTRATO["midas_datos_ordenes_previa_critica_bronze"]
-    ESPERADO_COMENTARIOS = CONTRATO["midas_datos_cometarios_ordenes_bronze"]
+    ESPERADO_CRITICA = CONTRATO["midas_datos_ordenes_previa_critica_c2_bronze"]
+    ESPERADO_COMENTARIOS = CONTRATO["midas_datos_cometarios_ordenes_c2_bronze"]
     print("Queries embebidas.")
     print("  crítica    :", len(ESPERADO_CRITICA), "columnas esperadas")
     print("  comentarios:", len(ESPERADO_COMENTARIOS), "columnas esperadas")
@@ -1326,7 +1326,7 @@ WHERE product_id = :p_servicio_suscrito --{Argumento 2 - servicio_suscrito}
 # COMMAND ----------
 # ───── Anclas: las mismas combinaciones que itera processing.run_query_ordenes_critica_previa ─────
 if EXPLORAR:
-    TL = "midas_datos_lecturas_producto_bronze"
+    TL = "midas_datos_lecturas_producto_c2_bronze"
     manual = [x.strip() for x in dbutils.widgets.get("ss_manual").split(",") if x.strip()]
 
     if manual:
