@@ -16,6 +16,23 @@
 -- NO estaban en el Parquet del 2026-08-11: ese archivo es anterior a v3.
 -- Salen de la cola declarada en _MIGRACION_V3, que es el orden en que las
 -- proyecta la query. Van AL FINAL porque insertInto es POSICIONAL (I13).
+--
+-- SIN PRIMARY KEY, a proposito. El bloque V8 del notebook 31 midio la unicidad real el
+-- 2026-08-11: 12.994 filas para 331 valores distintos de `servicio_suscrito`, que era la PK
+-- declarada. Una PK que los datos no cumplen es peor que ninguna — no falla (en Unity
+-- Catalog la PK es informativa), simplemente miente: invita a escribir un join que
+-- multiplica filas sin lanzar un solo error.
+--
+-- El NOT NULL SI se conserva y SI se hace cumplir: son claves de join y un nulo ahi seria
+-- un defecto real.
+--
+-- GRANO OBSERVADO: no hay ninguno unico con las columnas disponibles.
+-- Ni siquiera (servicio_suscrito, id_periodo_consumo, tipo_consumo, metodo_calculo) lo es:
+-- bajo metodo 4, 420 de 3.071 grupos traen mas de una calificacion distinta, o sea mas de
+-- una fila. Por eso Silver no asume unicidad: colapsa con un NULL honesto y publica un
+-- contador en vez de elegir un valor arbitrario con FIRST().
+--
+-- Si algun dia la unicidad se confirma, agregar la PK es un ALTER TABLE, no un rediseño.
 -- ==========================================================================
 CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_datos_consumos_producto_c2_bronze (
     servicio_suscrito       BIGINT NOT NULL,
@@ -32,10 +49,7 @@ CREATE TABLE IF NOT EXISTS {catalog}.{schema}.midas_datos_consumos_producto_c2_b
     funcion_calculo         STRING,
     calificacion            STRING,
     fecha_ini_consumo       STRING COMMENT 'R3: inicio de la ventana de consumo (pericose.PECSFECI). Texto YYYY-MM-DD.',
-    fecha_fin_consumo       STRING COMMENT 'R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD.',
-
-    CONSTRAINT pk_midas_datos_consumos_producto_c2_bronze
-        PRIMARY KEY (servicio_suscrito)
+    fecha_fin_consumo       STRING COMMENT 'R3: fin de la ventana de consumo (pericose.PECSFECF). Texto YYYY-MM-DD.'
 )
 USING DELTA
 COMMENT 'Consumos facturados.'

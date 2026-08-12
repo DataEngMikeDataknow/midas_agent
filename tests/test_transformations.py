@@ -540,6 +540,33 @@ class TestSeedContraArchivos(unittest.TestCase):
                 self.assertTrue((BRONZE_DDL_DIR / f"{tabla}.sql").exists(),
                                 f"falta {BRONZE_DDL_DIR.name}/{tabla}.sql")
 
+    def test_las_pk_retiradas_del_ddl_tienen_su_alter(self):
+        """Un DDL sin PK no basta para quitarla de una tabla que ya existe.
+
+        `CREATE TABLE IF NOT EXISTS` es un no-op contra una tabla existente, así que las
+        siete tablas cuya PK se retiró el 2026-08-11 conservarían la constraint en dllo si
+        nadie ejecuta el `ALTER ... DROP CONSTRAINT`. Es el mismo patrón que obliga a
+        `_MIGRACION_V3` a existir para las columnas: el DDL describe el estado deseado, la
+        migración lo alcanza. Este test exige que ambas listas digan lo mismo."""
+        nb = (Path(__file__).resolve().parents[1]
+              / "notebooks" / "00_creacion_objetos_midas.py").read_text(encoding="utf-8")
+        self.assertIn("_PK_FALSAS_RETIRADAS = [", nb, "desapareció el ALTER de las PK")
+        ini = nb.index("_PK_FALSAS_RETIRADAS = [")
+        con_alter = set(re.findall(r'"(midas_\w+)"', nb[ini:nb.index("]", ini)]))
+
+        sin_pk = set()
+        for ruta in BRONZE_DDL_DIR.glob("*.sql"):
+            ejecutable = [l for l in ruta.read_text(encoding="utf-8").splitlines()
+                          if not l.lstrip().startswith("--")]
+            if not any("PRIMARY KEY" in l for l in ejecutable):
+                sin_pk.add(ruta.stem)
+
+        self.assertTrue(sin_pk, "ningún DDL sin PK: el parseo dejó de funcionar")
+        self.assertEqual(
+            con_alter, sin_pk,
+            "el DDL y el ALTER se separaron: una tabla sin PK en el repo pero sin su DROP "
+            "CONSTRAINT conserva la PK falsa en el ambiente ya desplegado")
+
     def test_no_hay_sql_huerfano(self):
         """Un .sql que nadie sembró no se ejecuta nunca: es código muerto que aparenta vivir."""
         sembrados = {key for _, key, _ in _seed_silver()}

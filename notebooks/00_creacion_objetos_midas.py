@@ -181,6 +181,36 @@ for _archivo in _ddl_files:
     print(f"OK  DDL Bronze aplicado: {_archivo[:-4]}")
 print(f"OK  {len(_ddl_files)} DDL de Bronze ejecutados (CREATE TABLE IF NOT EXISTS)")
 
+# ───── Retiro de las PRIMARY KEY que los datos contradicen ─────
+# El bloque V8 del notebook 31 midio la unicidad real el 2026-08-11 y siete tablas
+# declaraban una PK que sus datos no cumplen (p.ej. lecturas: 3.180 filas para 331
+# `servicio_suscrito`). En Unity Catalog la PK es informativa —no falla— asi que la
+# afirmacion simplemente mentia: invita a escribir un join que multiplica filas sin
+# lanzar un solo error. El criterio ya estaba escrito en el DDL de
+# midas_historial_cargos_silver: "una PK que los datos no cumplen es peor que ninguna".
+#
+# Quitarla del DDL NO basta: `CREATE TABLE IF NOT EXISTS` no toca una tabla existente, y
+# estas tablas ya se crearon CON la constraint. Hace falta el ALTER, igual que
+# `_MIGRACION_V3` hace falta para las columnas. Es el mismo patron que ya nos costo dos
+# incidentes: el DDL describe el estado deseado, la migracion lo alcanza.
+#
+# El NOT NULL de esas columnas NO se toca: son claves de join y un nulo ahi si es defecto.
+_PK_FALSAS_RETIRADAS = [
+    "midas_datos_lecturas_producto_c2_bronze",
+    "midas_datos_consumos_producto_c2_bronze",
+    "midas_datos_ordenes_previa_critica_c2_bronze",
+    "midas_datos_cometarios_ordenes_c2_bronze",
+    "midas_datos_detalle_cargos_c2_bronze",
+    "midas_datos_consumos_contrato_bronze",
+    "midas_datos_investigacion_consumo_bronze",
+]
+for _t in _PK_FALSAS_RETIRADAS:
+    _full = f"{CATALOG}.{SCHEMA}.{_t}"
+    if not spark.catalog.tableExists(_full):
+        continue
+    spark.sql(f"ALTER TABLE {_full} DROP CONSTRAINT IF EXISTS pk_{_t}")
+    print(f"OK  PK informativa retirada (si existia): {_t}")
+
 # COMMAND ----------
 # ───── Migración guardada v3 (R3): columnas de periodo en las Bronze existentes ─────
 # insertInto es POSICIONAL. Si la query ya devuelve columnas nuevas y la tabla destino no

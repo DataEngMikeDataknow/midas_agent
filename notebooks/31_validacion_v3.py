@@ -191,6 +191,11 @@ CONTRATO = {
     "midas_datos_perdidas_no_operacionales_bronze": [
         "servicio_suscrito", "id_pno", "estado_pno", "tipo_irregularidad", "id_solicitud",
         "fecha_registro", "fecha_inicio_fraude", "fecha_fin_fraude", "id_orden", "comentario",
+        # Agregada el 2026-08-05 con el catalogo de estado_pno (R/E/F/N/P) que entrego
+        # negocio, resuelto inline en la query. Este contrato no se actualizo entonces, asi
+        # que el 2026-08-11 la reporto como columna "extra": un falso REVISAR sobre una
+        # columna que SI debe estar.
+        "estado_pno_desc",
     ],
 }
 
@@ -218,19 +223,32 @@ TIPOS_ESPERADOS = {
 }
 
 # PK declarada por ingestion.py (informativa en UC; el NOT NULL sí se aplica).
+# PK realmente declaradas en src/midas/sql/bronze/ddl/. Estas DEBEN ser unicas: una PK
+# aqui es una afirmacion, y V8 la verifica.
+#
+# Eran 12 hasta el 2026-08-11. La medicion de V8 mostro que SIETE no se cumplian, y se
+# retiraron: en Unity Catalog la PK es informativa, asi que no fallaba — solo mentia sobre
+# el grano e invitaba a joins que multiplican filas en silencio. El criterio ya estaba
+# escrito en el DDL de midas_historial_cargos_silver.
 PK_DECLARADA = {
     "midas_ordenes_calidad_pendientes_c2_bronze":      ["id_orden"],
     "midas_datos_basicos_producto_c2_bronze":          ["servicio_suscrito"],
+    "midas_datos_cuentas_cobro_c2_bronze":             ["id_cuenta_cobro"],
+    "midas_datos_detalle_solicitudes_c2_bronze":       ["servicio_suscrito", "id_solicitud"],
+    "midas_datos_perdidas_no_operacionales_bronze": ["id_pno"],
+}
+
+# Las siete SIN PK. No se les exige unicidad —seria volver a afirmar lo que se retiro—
+# pero se mide y se publica: perder la PK no debe significar perder la vigilancia. La
+# columna es la que ERA la PK; el grano real de cada una esta documentado en su DDL.
+SIN_PK_MEDIDAS = {
     "midas_datos_lecturas_producto_c2_bronze":         ["servicio_suscrito"],
     "midas_datos_consumos_producto_c2_bronze":         ["servicio_suscrito"],
     "midas_datos_ordenes_previa_critica_c2_bronze":    ["id_orden"],
     "midas_datos_cometarios_ordenes_c2_bronze":        ["id_orden"],
-    "midas_datos_cuentas_cobro_c2_bronze":             ["id_cuenta_cobro"],
     "midas_datos_detalle_cargos_c2_bronze":            ["id_cuenta_cobro"],
-    "midas_datos_detalle_solicitudes_c2_bronze":       ["servicio_suscrito", "id_solicitud"],
     "midas_datos_consumos_contrato_bronze":         ["servicio_suscrito"],
     "midas_datos_investigacion_consumo_bronze":     ["servicio_suscrito"],
-    "midas_datos_perdidas_no_operacionales_bronze": ["id_pno"],
 }
 
 # Retiradas en la v3: NO deben estar activas en control.
@@ -834,14 +852,40 @@ for tabla, pk in PK_DECLARADA.items():
         cond = cond | F.col(_c).isNull()
     nulos = df_t.filter(cond).count() if pk else 0
     chequeo("V8", f"{tabla.replace('midas_datos_', '')} PK={'+'.join(pk)}",
-            "OK" if unica else "REVISAR", f"{total} únicos", distintos,
-            "duplicados esperados y documentados" if not unica else "")
+            "OK" if unica else "FALLA", f"{total} únicos", distintos,
+            "" if unica else "la PK está DECLARADA en el DDL y los datos no la cumplen: "
+                             "o se corrige el grano o se retira la constraint")
     detalle_v8.append({"tabla": tabla, "pk_declarada": "+".join(pk), "filas": total,
                        "combinaciones_distintas": distintos, "unica": unica,
                        "nulos_en_pk": nulos})
 
 display(spark.createDataFrame(detalle_v8))
 print("\nNOTA: nulos_en_pk debería ser 0 siempre — el NOT NULL sí se aplica en UC.")
+
+# COMMAND ----------
+titulo("V8b · LAS SIETE SIN PK: SE MIDEN, NO SE EXIGEN")
+
+# Retirar la PK no es dejar de mirar. Aqui se publica la razon de haberla quitado —
+# cuantas filas por valor— para que si alguna se vuelve unica se pueda declarar, y para
+# que nadie asuma unicidad por costumbre. El grano real de cada tabla esta en su DDL.
+detalle_v8b = []
+for tabla, col_vieja in SIN_PK_MEDIDAS.items():
+    if not existe(tabla):
+        continue
+    if any(c not in columnas(tabla) for c in col_vieja):
+        continue
+    df_t = spark.table(f"{PREFIJO}.{tabla}")
+    total = df_t.count()
+    distintos = df_t.select(*col_vieja).distinct().count()
+    detalle_v8b.append({"tabla": tabla, "columna": "+".join(col_vieja), "filas": total,
+                       "valores_distintos": distintos,
+                       "filas_por_valor": round(total / distintos, 2) if distintos else None})
+    chequeo("V8b", f"{tabla.replace('midas_datos_', '')} sin PK ({'+'.join(col_vieja)})",
+            "OK", obtenido=f"{total:,} filas / {distintos:,} valores",
+            nota="informativo: si llegara a ser único, la PK se agrega con un ALTER")
+
+if detalle_v8b:
+    display(spark.createDataFrame(detalle_v8b))
 
 # COMMAND ----------
 # MAGIC %md
